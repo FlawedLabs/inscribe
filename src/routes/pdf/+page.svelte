@@ -1,11 +1,16 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { processedFile } from '../../stores/FileStore';
+	import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
+	import 'pdfjs-dist/web/pdf_viewer.css';
+
+	const PDF_SCALE = 1.3;
 
 	let pages = Array.from({ length: $processedFile.numPages }, (_, i) => i + 1);
 
 	let mainCanvas: HTMLCanvasElement;
 	let thumbnailsCanvas: HTMLCanvasElement[] = [];
+	let textLayerDiv: HTMLDivElement;
 
 	onMount(async () => {
 		loadThumbnails();
@@ -33,7 +38,9 @@
 
 	const loadPage = async (pageIndex: number) => {
 		const page = await $processedFile.getPage(pageIndex);
-		const viewport = page.getViewport({ scale: 1 });
+		const viewport = page.getViewport({ scale: PDF_SCALE });
+
+		textLayerDiv.innerHTML = '';
 
 		const canvas = mainCanvas;
 		canvas.width = viewport.width;
@@ -42,10 +49,23 @@
 
 		const renderContext = {
 			canvasContext: ctx,
-			viewport: viewport
+			viewport
 		};
 
 		await page.render(renderContext).promise;
+
+		page.getTextContent().then((textContent) => {
+			const textLayer = new pdfjs.TextLayer({
+				textContentSource: textContent,
+				container: textLayerDiv,
+				viewport
+			});
+
+			textLayerDiv.style.height = `${viewport.height}px`;
+			textLayerDiv.style.width = `${viewport.width}px`;
+
+			textLayer.render();
+		});
 	};
 </script>
 
@@ -67,8 +87,12 @@
 		{/each}
 	</div>
 
-	<div class="flex-1">
-		<canvas bind:this={mainCanvas} class="max-h-screen overflow-y-auto overflow-x-hidden shadow-lg"
-		></canvas>
+	<div class="pdfViewer flex-1" style={`--scale-factor: ${PDF_SCALE};`}>
+		<div class="page">
+			<div class="canvasWrapper">
+				<canvas bind:this={mainCanvas} class="shadow-lg"></canvas>
+			</div>
+			<div bind:this={textLayerDiv} class="textLayer"></div>
+		</div>
 	</div>
 </div>

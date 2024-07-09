@@ -1,7 +1,14 @@
-# Tauri + SvelteKit + TypeScript
+# Inscribe
 
-This template should help get you started developing with Tauri, SvelteKit and TypeScript in Vite.
+New generation **PDF Editor**
 
-## Recommended IDE Setup
+_Under heavy development_
 
-[VS Code](https://code.visualstudio.com/) + [Svelte](https://marketplace.visualstudio.com/items?itemName=svelte.svelte-vscode) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer).
+## Compile yourself
+
+### Pre requisite
+
+- Rust
+- npm
+
+`cargo build`

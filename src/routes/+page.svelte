@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
-	import { processedFile } from '../stores/FileStore';
+	import { fileName, processedFile } from '../stores/FileStore';
 
 	let file: File | null = null;
 
@@ -11,9 +11,10 @@
 		const target = event.target as HTMLInputElement;
 		if (target.files) {
 			file = target.files.item(0);
-			console.log(file);
+
 			if (file) {
 				const reader = new FileReader();
+				$fileName = file.name;
 
 				reader.onload = async (event) => {
 					const fileArrayBuffer = event.target?.result as ArrayBuffer;
@@ -33,7 +34,7 @@
 <div class="flex items-center justify-center w-full">
 	<label
 		for="dropzone-file"
-		class="flex flex-col items-center justify-center w-full h-64 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 dark:hover:bg-gray-800 dark:bg-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:hover:border-gray-500 dark:hover:bg-gray-600"
+		class="flex flex-col items-center justify-center w-full h-64 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 dark:hover:bg-gray-800 dark:bg-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:hover:border-gray-500"
 	>
 		<div class="flex flex-col items-center justify-center pt-5 pb-6">
 			<svg
