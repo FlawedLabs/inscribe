@@ -4,7 +4,7 @@
 	import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 	import 'pdfjs-dist/web/pdf_viewer.css';
 	import { goto } from '$app/navigation';
-	import { Sortable } from '@shopify/draggable';
+	import { Sortable, type SortableEventNames } from '@shopify/draggable';
 
 	const PDF_SCALE = 1.3;
 
@@ -16,7 +16,7 @@
 
 	let thumbnailContainer: HTMLDivElement;
 
-	let sortable: any;
+	let sortable: Sortable<SortableEventNames>;
 
 	onMount(async () => {
 		if ($processedFile) {
@@ -26,6 +26,7 @@
 
 			sortable = new Sortable(thumbnailContainer, {
 				draggable: '.thumbnail-sub-container',
+				delay: 200,
 
 				mirror: {
 					appendTo: thumbnailContainer,
