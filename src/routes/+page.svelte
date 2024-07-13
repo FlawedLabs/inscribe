@@ -4,10 +4,11 @@
 	import { fileAsBlob, fileName, processedFile } from '../stores/FileStore';
 	import { onMount } from 'svelte';
 	import { saveBlob } from './utils/IndexDBUtils';
+	import PdfHistoryFile from './components/PdfHistoryFile.svelte';
 
 	let file: File | null = null;
 	let isLoading: boolean = false;
-
+	let recentFiles: Array<RecentFile> = [];
 	let db: IDBDatabase | undefined;
 
 	pdfjs.GlobalWorkerOptions.workerSrc = 'pdf.worker.min.mjs';
@@ -26,7 +27,14 @@
 
 		dbInit.onsuccess = (event) => {
 			db = (event.target as IDBOpenDBRequest).result;
-			console.log('DB opened:', db);
+			const request = db.transaction('recentFiles').objectStore('recentFiles').getAll();
+			request.onsuccess = () => {
+				recentFiles = request.result;
+			};
+
+			request.onerror = (err) => {
+				console.error(`Error to get student information: ${err}`);
+			};
 		};
 
 		dbInit.onerror = (event) => {
@@ -105,4 +113,11 @@
 			class="hidden"
 		/>
 	</label>
+	<div>
+		{#each recentFiles as file}
+			<div>
+				<PdfHistoryFile fileData={file}></PdfHistoryFile>
+			</div>
+		{/each}
+	</div>
 </div>
