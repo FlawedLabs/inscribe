@@ -2,11 +2,37 @@
 	import { goto } from '$app/navigation';
 	import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 	import { fileAsBlob, fileName, processedFile } from '../stores/FileStore';
+	import { onMount } from 'svelte';
+	import { saveBlob } from './utils/IndexDBUtils';
 
 	let file: File | null = null;
 	let isLoading: boolean = false;
 
+	let db: IDBDatabase | undefined;
+
 	pdfjs.GlobalWorkerOptions.workerSrc = 'pdf.worker.min.mjs';
+
+	onMount(() => {
+		const dbInit = indexedDB.open('inscribe', 1);
+
+		dbInit.onupgradeneeded = (event) => {
+			db = (event.target as IDBOpenDBRequest).result;
+
+			// Create the object store inside the onupgradeneeded event
+			if (!db.objectStoreNames.contains('recentFiles')) {
+				db.createObjectStore('recentFiles', { keyPath: 'id', autoIncrement: true });
+			}
+		};
+
+		dbInit.onsuccess = (event) => {
+			db = (event.target as IDBOpenDBRequest).result;
+			console.log('DB opened:', db);
+		};
+
+		dbInit.onerror = (event) => {
+			console.error('DB error:', (event.target as IDBOpenDBRequest).error);
+		};
+	});
 
 	const handleFileSelection = (event: Event) => {
 		isLoading = true;
@@ -26,6 +52,11 @@
 
 					const loadingTask = pdfjs.getDocument({ data: fileArrayBuffer });
 					$processedFile = await loadingTask.promise;
+
+					// Save the file to IndexedDB
+					if (db) {
+						saveBlob(db, 'recentFiles', $fileAsBlob, $fileName);
+					}
 
 					await goto('/pdf');
 					isLoading = false;
