@@ -8,7 +8,7 @@
 	};
 </script>
 
-<nav class="flex justify-between items-center py-1 px-4 bg-gray-50 dark:bg-gray-700">
+<nav class="flex justify-between items-center py-1 px-4 bg-slate-100 dark:bg-gray-700">
 	<h4 class="font-bold">{$fileName}</h4>
 
 	<div>
