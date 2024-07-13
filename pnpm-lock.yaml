@@ -35,6 +35,9 @@ importers:
       postcss:
         specifier: ^8.4.39
         version: 8.4.39
+      svelte-inview:
+        specifier: ^4.0.2
+        version: 4.0.2(svelte@4.2.18)
       tailwindcss:
         specifier: ^3.4.4
         version: 3.4.4
@@ -1435,6 +1438,11 @@ packages:
     engines: {node: ^12.20 || ^14.13.1 || >= 16}
     peerDependencies:
       svelte: ^3.19.0 || ^4.0.0
+
+  svelte-inview@4.0.2:
+    resolution: {integrity: sha512-saJp2QRCUEBletGPnI3utxROHqruDGRPfPhtdpNYQwD97P2oCKiVIlZE3tFNEiC7h3nCvU+8czaKWcH1o/axrA==}
+    peerDependencies:
+      svelte: ^3.0.0 || ^4.0.0
 
   svelte-preprocess@5.1.4:
     resolution: {integrity: sha512-IvnbQ6D6Ao3Gg6ftiM5tdbR6aAETwjhHV+UKGf5bHGYR69RQvF1ho0JKPcbUON4vy4R7zom13jPjgdOWCQ5hDA==}
@@ -2933,6 +2941,10 @@ snapshots:
       - sugarss
 
   svelte-hmr@0.16.0(svelte@4.2.18):
+    dependencies:
+      svelte: 4.2.18
+
+  svelte-inview@4.0.2(svelte@4.2.18):
     dependencies:
       svelte: 4.2.18
 

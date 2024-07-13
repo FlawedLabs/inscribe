@@ -1,13 +1,16 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
-	import { fileName, processedFile } from '../stores/FileStore';
+	import { fileAsBlob, fileName, processedFile } from '../stores/FileStore';
 
 	let file: File | null = null;
+	let isLoading: boolean = false;
 
 	pdfjs.GlobalWorkerOptions.workerSrc = 'pdf.worker.min.mjs';
 
 	const handleFileSelection = (event: Event) => {
+		isLoading = true;
+
 		const target = event.target as HTMLInputElement;
 		if (target.files) {
 			file = target.files.item(0);
@@ -19,10 +22,13 @@
 				reader.onload = async (event) => {
 					const fileArrayBuffer = event.target?.result as ArrayBuffer;
 
+					$fileAsBlob = new Blob([fileArrayBuffer], { type: 'application/pdf' });
+
 					const loadingTask = pdfjs.getDocument({ data: fileArrayBuffer });
 					$processedFile = await loadingTask.promise;
 
 					await goto('/pdf');
+					isLoading = false;
 				};
 
 				reader.readAsArrayBuffer(file);
@@ -31,6 +37,9 @@
 	};
 </script>
 
+{#if isLoading}
+	<p>Loading...</p>
+{/if}
 <div class="flex items-center justify-center w-full">
 	<label
 		for="dropzone-file"

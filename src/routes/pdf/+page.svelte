@@ -1,18 +1,23 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { processedFile } from '../../stores/FileStore';
+	import { fileAsBlob, fileName, processedFile } from '../../stores/FileStore';
 	import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 	import 'pdfjs-dist/web/pdf_viewer.css';
 	import { goto } from '$app/navigation';
 	import { Sortable, type SortableEventNames } from '@shopify/draggable';
+	import { PDFDocument, PDFPage } from 'pdf-lib';
+	import { inview } from 'svelte-inview';
+	import PageSeparator from '../components/PageSeparator.svelte';
 
 	const PDF_SCALE = 1.3;
 
 	let pages: number[] = [];
 
-	let mainCanvas: HTMLCanvasElement;
+	let mainCanvas: HTMLCanvasElement[] = [];
 	let thumbnailsCanvas: HTMLCanvasElement[] = [];
-	let textLayerDiv: HTMLDivElement;
+	let textLayerDiv: HTMLDivElement[] = [];
+
+	let isInView: boolean[] = [true, ...Array.from({ length: 99 }, () => false)];
 
 	let thumbnailContainer: HTMLDivElement;
 
@@ -22,12 +27,10 @@
 		if ($processedFile) {
 			pages = Array.from({ length: $processedFile.numPages }, (_, i) => i + 1);
 			loadThumbnails();
-			loadPage(1);
 
 			sortable = new Sortable(thumbnailContainer, {
 				draggable: '.thumbnail-sub-container',
 				delay: 200,
-
 				mirror: {
 					appendTo: thumbnailContainer,
 					constrainDimensions: true
@@ -68,64 +71,138 @@
 	};
 
 	const loadPage = async (pageIndex: number) => {
-		const page = await $processedFile.getPage(pageIndex);
-		const viewport = page.getViewport({ scale: PDF_SCALE });
+		// Prevent loading already loaded
+		if (!isInView[pageIndex]) {
+			console.log('Loading page', pageIndex);
+			isInView[pageIndex - 1] = true;
 
-		textLayerDiv.innerHTML = '';
+			// Processed File starts at 1
+			const page = await $processedFile.getPage(pageIndex);
+			const viewport = page.getViewport({ scale: PDF_SCALE });
 
-		const canvas = mainCanvas;
-		canvas.width = viewport.width;
-		canvas.height = viewport.height;
-		const ctx = canvas.getContext('2d')!;
+			const canvas = mainCanvas[pageIndex - 1];
+			canvas.width = viewport.width;
+			canvas.height = viewport.height;
+			const ctx = canvas.getContext('2d')!;
 
-		const renderContext = {
-			canvasContext: ctx,
-			viewport
-		};
-
-		await page.render(renderContext).promise;
-
-		page.getTextContent().then((textContent) => {
-			const textLayer = new pdfjs.TextLayer({
-				textContentSource: textContent,
-				container: textLayerDiv,
+			const renderContext = {
+				canvasContext: ctx,
 				viewport
+			};
+
+			await page.render(renderContext).promise;
+
+			page.getTextContent().then((textContent) => {
+				const textLayer = new pdfjs.TextLayer({
+					textContentSource: textContent,
+					container: textLayerDiv[pageIndex - 1],
+					viewport
+				});
+
+				textLayerDiv[pageIndex - 1].style.height = `${viewport.height}px`;
+				textLayerDiv[pageIndex - 1].style.width = `${viewport.width}px`;
+
+				textLayer.render();
 			});
+		}
+	};
 
-			textLayerDiv.style.height = `${viewport.height}px`;
-			textLayerDiv.style.width = `${viewport.width}px`;
+	// Reorder pages in the PDF document
+	const reorderPages = async (pdfDoc: PDFDocument, newOrder: number[]) => {
+		const originalPages = pdfDoc.getPages();
+		let reorderedPages: PDFPage[] = [];
 
-			textLayer.render();
+		// Create a reordered array of pages based on newOrder
+		newOrder.forEach((order) => {
+			const pageIndex = order - 1;
+			reorderedPages.push(originalPages[pageIndex]);
 		});
+
+		// Remove all pages from the document
+		for (let i = originalPages.length - 1; i >= 0; i--) {
+			pdfDoc.removePage(i);
+		}
+
+		// Add pages back in the new order
+		reorderedPages.forEach((page) => {
+			pdfDoc.addPage(page);
+		});
+	};
+
+	const save = async () => {
+		const fileArrayBuffer = await $fileAsBlob.arrayBuffer();
+		const pdfLibDoc = await PDFDocument.load(fileArrayBuffer);
+
+		reorderPages(pdfLibDoc, pages);
+
+		const pdfBytes = await pdfLibDoc.save();
+
+		const fileBlob = new Blob([pdfBytes], { type: 'application/pdf' });
+
+		const link = document.createElement('a');
+		link.href = URL.createObjectURL(fileBlob);
+		link.download = $fileName;
+
+		link.click();
+		link.remove();
+
+		setTimeout(() => URL.revokeObjectURL(link.href), 7000);
 	};
 </script>
 
-<div class="flex h-screen bg-gray-100">
+<div class="flex min-h-screen h-full bg-gray-100">
 	<div
 		bind:this={thumbnailContainer}
-		class="w-48 overflow-y-auto border-r-2 border-gray-800 bg-gray-200 p-2 flex flex-col items-center gap-5"
+		class="w-48 h-full fixed overflow-y-auto border-r-2 border-gray-800 bg-gray-200 p-2 flex flex-col items-center gap-5"
 	>
-		{#each pages as page (page)}
+		<button on:click={save}>save</button>
+
+		{#each pages as page, i (page)}
 			<!-- svelte-ignore a11y-no-static-element-interactions -->
 			<div class="thumbnail-sub-container">
-				<canvas
-					class="hover:cursor-pointer shadow-lg"
-					on:click={() => loadPage(page)}
-					bind:this={thumbnailsCanvas[page - 1]}
-					height="168"
-					width="120"
-				></canvas>
-				<p>Page {page}</p>
+				<a href="#page-{page}">
+					<canvas
+						class="hover:cursor-pointer shadow-lg"
+						bind:this={thumbnailsCanvas[page - 1]}
+						height="168"
+						width="120"
+					></canvas>
+				</a>
+				<p>Page {i + 1}</p>
 			</div>
 		{/each}
 	</div>
 
 	<div class="pdfViewer flex-1" style={`--scale-factor: ${PDF_SCALE};`}>
+		{#each pages as page (page)}
+			<div id={`page-${page}`} class="page shadow-md">
+				<div class="canvasWrapper" use:inview on:inview_enter={() => loadPage(page)}>
+					{#if isInView[page - 1] === true}
+						<canvas bind:this={mainCanvas[page - 1]} class="shadow-lg"></canvas>
+					{:else}
+						<div class="w-full h-full flex items-center justify-center">
+							<div class="text-gray-400">Loading...</div>
+						</div>
+					{/if}
+				</div>
+				<div bind:this={textLayerDiv[page - 1]} class="textLayer"></div>
+			</div>
+			<PageSeparator />
+		{/each}
+	</div>
+
+	<!-- <div class="pdfViewer flex-1" style={`--scale-factor: ${PDF_SCALE};`}>
 		<div class="page">
-			<div class="canvasWrapper">
+			<div class="canvasWrapper shadow-md">
 				<canvas bind:this={mainCanvas} class="shadow-lg"></canvas>
 			</div>
 			<div bind:this={textLayerDiv} class="textLayer"></div>
 		</div>
-	</div>
+	</div> -->
 </div>
+
+<style>
+	.page {
+		border: 0;
+	}
+</style>

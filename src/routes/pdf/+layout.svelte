@@ -20,6 +20,8 @@
 				<ScanText />
 			</button>
 		{/if}
+
+		<button>Save PDF</button>
 	</div>
 </nav>
 

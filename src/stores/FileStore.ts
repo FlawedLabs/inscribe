@@ -3,5 +3,6 @@ import { writable } from 'svelte/store';
 
 const fileName = writable<string>('');
 const processedFile = writable<PDFDocumentProxy>();
+const fileAsBlob = writable<Blob>();
 
-export { processedFile, fileName };
+export { processedFile, fileName, fileAsBlob };
