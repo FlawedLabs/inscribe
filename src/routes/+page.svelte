@@ -1,14 +1,13 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
-	import { fileAsBlob, fileName, processedFile } from '../stores/FileStore';
+	import { fileName, openedFile } from '../stores/FileStore';
+	import { load } from '@/utils/PDFjsHelper';
+	import 'pdfjs-dist/build/pdf.worker.min.mjs';
 
 	let file: File | null = null;
 	let isLoading: boolean = false;
 
-	pdfjs.GlobalWorkerOptions.workerSrc = 'pdf.worker.min.mjs';
-
-	const handleFileSelection = (event: Event) => {
+	const handleFileSelection = async (event: Event) => {
 		isLoading = true;
 
 		const target = event.target as HTMLInputElement;
@@ -16,22 +15,14 @@
 			file = target.files.item(0);
 
 			if (file) {
-				const reader = new FileReader();
 				$fileName = file.name;
 
-				reader.onload = async (event) => {
-					const fileArrayBuffer = event.target?.result as ArrayBuffer;
+				$openedFile = file;
 
-					$fileAsBlob = new Blob([fileArrayBuffer], { type: 'application/pdf' });
+				await load(file);
 
-					const loadingTask = pdfjs.getDocument({ data: fileArrayBuffer });
-					$processedFile = await loadingTask.promise;
-
-					await goto('/pdf');
-					isLoading = false;
-				};
-
-				reader.readAsArrayBuffer(file);
+				await goto('/pdf');
+				isLoading = false;
 			}
 		}
 	};

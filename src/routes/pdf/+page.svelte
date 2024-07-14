@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { fileAsBlob, fileName, processedFile } from '../../stores/FileStore';
+	import { openedFile, updatedFile, fileName, processedFile } from '../../stores/FileStore';
 	import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 	import 'pdfjs-dist/web/pdf_viewer.css';
 	import { goto } from '$app/navigation';
@@ -10,6 +10,7 @@
 	import PageSeparator from '../../lib/components/PageSeparator.svelte';
 	import * as ContextMenu from '$lib/components/ui/context-menu/index';
 	import { Files, Trash } from 'lucide-svelte';
+	import { load } from '$lib/utils/PDFLibHelper';
 
 	const PDF_SCALE = 1.3;
 
@@ -29,6 +30,14 @@
 	let sortable: Sortable<SortableEventNames>;
 
 	onMount(async () => {
+		$updatedFile = await load($openedFile);
+	});
+
+	$: {
+		init($processedFile);
+	}
+
+	const init = async (file: pdfjs.PDFDocumentProxy | null) => {
 		if ($processedFile) {
 			pages = Array.from({ length: $processedFile.numPages }, (_, i) => i + 1);
 			loadThumbnails();
@@ -61,7 +70,7 @@
 		} else {
 			goto('/');
 		}
-	});
+	};
 
 	const loadThumbnails = async () => {
 		for (let pageNum = 1; pageNum <= $processedFile.numPages; pageNum++) {
@@ -141,26 +150,6 @@
 		});
 	};
 
-	const save = async () => {
-		const fileArrayBuffer = await $fileAsBlob.arrayBuffer();
-		const pdfLibDoc = await PDFDocument.load(fileArrayBuffer);
-
-		reorderPages(pdfLibDoc, pages);
-
-		const pdfBytes = await pdfLibDoc.save();
-
-		const fileBlob = new Blob([pdfBytes], { type: 'application/pdf' });
-
-		const link = document.createElement('a');
-		link.href = URL.createObjectURL(fileBlob);
-		link.download = $fileName;
-
-		link.click();
-		link.remove();
-
-		setTimeout(() => URL.revokeObjectURL(link.href), 7000);
-	};
-
 	const onPageVisible = (pageNumber: number) => {
 		loadPage(pageNumber);
 		selectedPage = pageNumber;
@@ -169,33 +158,32 @@
 
 <div class="flex min-h-screen h-full bg-gray-100">
 	<div
-		bind:this={thumbnailContainer}
 		class="w-48 h-full fixed overflow-y-auto border-r-2 border-gray-800 bg-stone-100 p-2 flex flex-col items-center gap-5"
 	>
-		<button on:click={save}>save {window.location.hash}</button>
-
 		<ContextMenu.Root>
 			<ContextMenu.Trigger>
-				{#each pages as page, i (page)}
-					<!-- svelte-ignore a11y-no-static-element-interactions -->
-					<div
-						class={`thumbnail-sub-container px-4 pb-2 pt-3 rounded-md ${selectedPage === page ? 'bg-blue-200' : ''}`}
-					>
-						<a href="#page-{page}">
-							<canvas
-								class={`hover:cursor-pointer rounded-sm border-2 ${selectedPage === page ? 'border-blue-500' : 'border-stone-200'}`}
-								bind:this={thumbnailsCanvas[page - 1]}
-								height="168"
-								width="120"
-							></canvas>
-						</a>
-						<p
-							class={`${selectedPage === page ? 'text-blue-500' : 'text-slate-500'} font-semibold`}
+				<div bind:this={thumbnailContainer}>
+					{#each pages as page, i (page)}
+						<!-- svelte-ignore a11y-no-static-element-interactions -->
+						<div
+							class={`thumbnail-sub-container px-4 pb-2 pt-3 rounded-md ${selectedPage === page ? 'bg-blue-200' : ''}`}
 						>
-							Page {i + 1}
-						</p>
-					</div>
-				{/each}
+							<a href="#page-{page}">
+								<canvas
+									class={`hover:cursor-pointer rounded-sm border-2 ${selectedPage === page ? 'border-blue-500' : 'border-stone-200'}`}
+									bind:this={thumbnailsCanvas[page - 1]}
+									height="168"
+									width="120"
+								></canvas>
+							</a>
+							<p
+								class={`${selectedPage === page ? 'text-blue-500' : 'text-slate-500'} font-semibold`}
+							>
+								Page {i + 1}
+							</p>
+						</div>
+					{/each}
+				</div>
 			</ContextMenu.Trigger>
 
 			<ContextMenu.Content class="w-64">
