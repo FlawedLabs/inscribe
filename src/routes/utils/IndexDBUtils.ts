@@ -25,7 +25,6 @@ const handleRecentFiles = (db: IDBDatabase) => {
 
 	request.onsuccess = ()=> {
 		const files = request.result;
-		console.log(files, files.length);
 		if(files.length === 5) {
 			deleteOldestFile(db, files[0].id)
 		}
@@ -47,19 +46,4 @@ const deleteOldestFile = (db: IDBDatabase, key: IDBValidKey) => {
     request.onerror = (err)=> {
         console.error(`Error to oldest file: ${err}`)
     }
-}
-
-export const getAllRecentFiles = (db: IDBDatabase) => {
-	const request = db.transaction('recentFiles').objectStore('recentFiles').getAll()
-	let result: Array<[]> = []
-	request.onsuccess = ()=> {
-		result = request.result;
-		return result
-    }
-
-    request.onerror = (err)=> {
-        console.error(`Error to get files information: ${err}`)
-    }
-
-	return result
 }

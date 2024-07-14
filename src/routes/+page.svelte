@@ -113,7 +113,7 @@
 			class="hidden"
 		/>
 	</label>
-	<div>
+	<div class="mr-6">
 		{#each recentFiles as file}
 			<div>
 				<PdfHistoryFile fileData={file}></PdfHistoryFile>
