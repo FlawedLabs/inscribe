@@ -36,6 +36,8 @@
 			// We create an array containing the rendered state of each page
 			isInView = [true, ...Array.from({ length: pages.length }, () => false)];
 
+			loadPage(1);
+
 			// Make the thumbnails draggable
 			sortable = new Sortable(thumbnailContainer, {
 				draggable: '.thumbnail-sub-container',
@@ -208,7 +210,7 @@
 		</ContextMenu.Root>
 	</div>
 
-	<div class="pdfViewer flex-1" style={`--scale-factor: ${PDF_SCALE};`}>
+	<div class="pdfViewer flex-1 mt-18" style={`--scale-factor: ${PDF_SCALE};`}>
 		<div class="container flex flex-col items-center w-2/3">
 			{#each pages as page (page)}
 				<div id={`page-${page}`} class="page">
@@ -227,13 +229,4 @@
 			{/each}
 		</div>
 	</div>
-
-	<!-- <div class="pdfViewer flex-1" style={`--scale-factor: ${PDF_SCALE};`}>
-		<div class="page">
-			<div class="canvasWrapper shadow-md">
-				<canvas bind:this={mainCanvas} class="shadow-lg"></canvas>
-			</div>
-			<div bind:this={textLayerDiv} class="textLayer"></div>
-		</div>
-	</div> -->
 </div>
