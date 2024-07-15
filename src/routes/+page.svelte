@@ -2,7 +2,6 @@
 	import { goto } from '$app/navigation';
 	import { fileName, openedFile } from '../stores/FileStore';
 	import { load } from '@/utils/PDFjsHelper';
-	import 'pdfjs-dist/build/pdf.worker.min.mjs';
 
 	let file: File | null = null;
 	let isLoading: boolean = false;

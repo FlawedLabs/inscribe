@@ -3,6 +3,7 @@
 	import '@fontsource/mulish/500.css';
 	import '@fontsource/mulish/600.css';
 	import '@fontsource/mulish/700.css';
+	import 'pdfjs-dist/build/pdf.worker.min.mjs';
 	import '../app.css';
 </script>
 
