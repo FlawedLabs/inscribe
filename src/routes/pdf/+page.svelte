@@ -1,13 +1,16 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { fileAsBlob, fileName, processedFile } from '../../stores/FileStore';
+	import { openedFile, updatedFile, fileName, processedFile } from '../../stores/FileStore';
 	import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 	import 'pdfjs-dist/web/pdf_viewer.css';
 	import { goto } from '$app/navigation';
 	import { Sortable, type SortableEventNames } from '@shopify/draggable';
 	import { PDFDocument, PDFPage } from 'pdf-lib';
 	import { inview } from 'svelte-inview';
-	import PageSeparator from '../components/PageSeparator.svelte';
+	import PageSeparator from '../../lib/components/PageSeparator.svelte';
+	import * as ContextMenu from '$lib/components/ui/context-menu/index';
+	import { Files, Trash } from 'lucide-svelte';
+	import { load } from '$lib/utils/PDFLibHelper';
 
 	const PDF_SCALE = 1.3;
 
@@ -17,17 +20,34 @@
 	let thumbnailsCanvas: HTMLCanvasElement[] = [];
 	let textLayerDiv: HTMLDivElement[] = [];
 
-	let isInView: boolean[] = [true, ...Array.from({ length: 99 }, () => false)];
+	// By default, only render the first page
+	let isInView: boolean[];
+
+	let selectedPage = 1;
 
 	let thumbnailContainer: HTMLDivElement;
 
 	let sortable: Sortable<SortableEventNames>;
 
 	onMount(async () => {
+		$updatedFile = await load($openedFile);
+	});
+
+	$: {
+		init($processedFile);
+	}
+
+	const init = async (file: pdfjs.PDFDocumentProxy | null) => {
 		if ($processedFile) {
 			pages = Array.from({ length: $processedFile.numPages }, (_, i) => i + 1);
 			loadThumbnails();
 
+			// We create an array containing the rendered state of each page
+			isInView = [true, ...Array.from({ length: pages.length }, () => false)];
+
+			loadPage(1);
+
+			// Make the thumbnails draggable
 			sortable = new Sortable(thumbnailContainer, {
 				draggable: '.thumbnail-sub-container',
 				delay: 200,
@@ -37,6 +57,7 @@
 				}
 			});
 
+			// When the user stops dragging a thumbnail, we update the pages array
 			sortable.on('sortable:stop', (event: { oldIndex: any; newIndex: any }) => {
 				const { oldIndex, newIndex } = event;
 
@@ -49,7 +70,7 @@
 		} else {
 			goto('/');
 		}
-	});
+	};
 
 	const loadThumbnails = async () => {
 		for (let pageNum = 1; pageNum <= $processedFile.numPages; pageNum++) {
@@ -129,80 +150,71 @@
 		});
 	};
 
-	const save = async () => {
-		const fileArrayBuffer = await $fileAsBlob.arrayBuffer();
-		const pdfLibDoc = await PDFDocument.load(fileArrayBuffer);
-
-		reorderPages(pdfLibDoc, pages);
-
-		const pdfBytes = await pdfLibDoc.save();
-
-		const fileBlob = new Blob([pdfBytes], { type: 'application/pdf' });
-
-		const link = document.createElement('a');
-		link.href = URL.createObjectURL(fileBlob);
-		link.download = $fileName;
-
-		link.click();
-		link.remove();
-
-		setTimeout(() => URL.revokeObjectURL(link.href), 7000);
+	const onPageVisible = (pageNumber: number) => {
+		loadPage(pageNumber);
+		selectedPage = pageNumber;
 	};
 </script>
 
 <div class="flex min-h-screen h-full bg-gray-100">
 	<div
-		bind:this={thumbnailContainer}
-		class="w-48 h-full fixed overflow-y-auto border-r-2 border-gray-800 bg-gray-200 p-2 flex flex-col items-center gap-5"
+		class="w-48 h-full fixed overflow-y-auto border-r-2 border-gray-800 bg-stone-100 p-2 flex flex-col items-center gap-5"
 	>
-		<button on:click={save}>save</button>
-
-		{#each pages as page, i (page)}
-			<!-- svelte-ignore a11y-no-static-element-interactions -->
-			<div class="thumbnail-sub-container">
-				<a href="#page-{page}">
-					<canvas
-						class="hover:cursor-pointer shadow-lg"
-						bind:this={thumbnailsCanvas[page - 1]}
-						height="168"
-						width="120"
-					></canvas>
-				</a>
-				<p>Page {i + 1}</p>
-			</div>
-		{/each}
-	</div>
-
-	<div class="pdfViewer flex-1" style={`--scale-factor: ${PDF_SCALE};`}>
-		{#each pages as page (page)}
-			<div id={`page-${page}`} class="page shadow-md">
-				<div class="canvasWrapper" use:inview on:inview_enter={() => loadPage(page)}>
-					{#if isInView[page - 1] === true}
-						<canvas bind:this={mainCanvas[page - 1]} class="shadow-lg"></canvas>
-					{:else}
-						<div class="w-full h-full flex items-center justify-center">
-							<div class="text-gray-400">Loading...</div>
+		<ContextMenu.Root>
+			<ContextMenu.Trigger>
+				<div bind:this={thumbnailContainer}>
+					{#each pages as page, i (page)}
+						<!-- svelte-ignore a11y-no-static-element-interactions -->
+						<div
+							class={`thumbnail-sub-container px-4 pb-2 pt-3 rounded-md ${selectedPage === page ? 'bg-blue-200' : ''}`}
+						>
+							<a href="#page-{page}">
+								<canvas
+									class={`hover:cursor-pointer rounded-sm border-2 ${selectedPage === page ? 'border-blue-500' : 'border-stone-200'}`}
+									bind:this={thumbnailsCanvas[page - 1]}
+									height="168"
+									width="120"
+								></canvas>
+							</a>
+							<p
+								class={`${selectedPage === page ? 'text-blue-500' : 'text-slate-500'} font-semibold`}
+							>
+								Page {i + 1}
+							</p>
 						</div>
-					{/if}
+					{/each}
 				</div>
-				<div bind:this={textLayerDiv[page - 1]} class="textLayer"></div>
-			</div>
-			<PageSeparator />
-		{/each}
+			</ContextMenu.Trigger>
+
+			<ContextMenu.Content class="w-64">
+				<ContextMenu.Item class="gap-2">
+					Duplicate <Files size={16} />
+				</ContextMenu.Item>
+				<ContextMenu.Item class="text-red-500 flex gap-2 hover:text-red-600">
+					Delete <Trash size={16} />
+					<ContextMenu.Shortcut>X</ContextMenu.Shortcut>
+				</ContextMenu.Item>
+			</ContextMenu.Content>
+		</ContextMenu.Root>
 	</div>
 
-	<!-- <div class="pdfViewer flex-1" style={`--scale-factor: ${PDF_SCALE};`}>
-		<div class="page">
-			<div class="canvasWrapper shadow-md">
-				<canvas bind:this={mainCanvas} class="shadow-lg"></canvas>
-			</div>
-			<div bind:this={textLayerDiv} class="textLayer"></div>
+	<div class="pdfViewer flex-1 mt-18" style={`--scale-factor: ${PDF_SCALE};`}>
+		<div class="container flex flex-col items-center w-2/3">
+			{#each pages as page (page)}
+				<div id={`page-${page}`} class="page">
+					<div class="canvasWrapper" use:inview on:inview_enter={() => onPageVisible(page)}>
+						{#if isInView[page - 1] === true}
+							<canvas bind:this={mainCanvas[page - 1]} class="shadow-lg"></canvas>
+						{:else}
+							<div class="w-full h-full flex items-center justify-center">
+								<div class="text-gray-400">Loading...</div>
+							</div>
+						{/if}
+					</div>
+					<div bind:this={textLayerDiv[page - 1]} class="textLayer"></div>
+				</div>
+				<PageSeparator />
+			{/each}
 		</div>
-	</div> -->
+	</div>
 </div>
-
-<style>
-	.page {
-		border: 0;
-	}
-</style>

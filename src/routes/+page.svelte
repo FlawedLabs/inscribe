@@ -1,48 +1,43 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
-	import { fileAsBlob, fileName, processedFile } from '../stores/FileStore';
-	import { onMount } from 'svelte';
 	import { saveBlob } from './utils/IndexDBUtils';
 	import PdfHistoryFile from './components/PdfHistoryFile.svelte';
+	import { fileName, openedFile } from '../stores/FileStore';
+	import { load } from '@/utils/PDFjsHelper';
 
 	let file: File | null = null;
 	let isLoading: boolean = false;
 	let recentFiles: Array<RecentFile> = [];
 	let db: IDBDatabase | undefined;
 
-	pdfjs.GlobalWorkerOptions.workerSrc = 'pdf.worker.min.mjs';
+	const dbInit = indexedDB.open('inscribe', 1);
 
-	onMount(() => {
-		const dbInit = indexedDB.open('inscribe', 1);
+	dbInit.onupgradeneeded = (event) => {
+		db = (event.target as IDBOpenDBRequest).result;
 
-		dbInit.onupgradeneeded = (event) => {
-			db = (event.target as IDBOpenDBRequest).result;
+		// Create the object store inside the onupgradeneeded event
+		if (!db.objectStoreNames.contains('recentFiles')) {
+			db.createObjectStore('recentFiles', { keyPath: 'id', autoIncrement: true });
+		}
+	};
 
-			// Create the object store inside the onupgradeneeded event
-			if (!db.objectStoreNames.contains('recentFiles')) {
-				db.createObjectStore('recentFiles', { keyPath: 'id', autoIncrement: true });
-			}
+	dbInit.onsuccess = (event) => {
+		db = (event.target as IDBOpenDBRequest).result;
+		const request = db.transaction('recentFiles').objectStore('recentFiles').getAll();
+		request.onsuccess = () => {
+			recentFiles = request.result;
 		};
 
-		dbInit.onsuccess = (event) => {
-			db = (event.target as IDBOpenDBRequest).result;
-			const request = db.transaction('recentFiles').objectStore('recentFiles').getAll();
-			request.onsuccess = () => {
-				recentFiles = request.result;
-			};
-
-			request.onerror = (err) => {
-				console.error(`Error to get student information: ${err}`);
-			};
+		request.onerror = (err) => {
+			console.error(`Error to get student information: ${err}`);
 		};
+	};
 
-		dbInit.onerror = (event) => {
-			console.error('DB error:', (event.target as IDBOpenDBRequest).error);
-		};
-	});
+	dbInit.onerror = (event) => {
+		console.error('DB error:', (event.target as IDBOpenDBRequest).error);
+	};
 
-	const handleFileSelection = (event: Event) => {
+	const handleFileSelection = async (event: Event) => {
 		isLoading = true;
 
 		const target = event.target as HTMLInputElement;
@@ -50,27 +45,18 @@
 			file = target.files.item(0);
 
 			if (file) {
-				const reader = new FileReader();
 				$fileName = file.name;
+				$openedFile = file;
 
-				reader.onload = async (event) => {
-					const fileArrayBuffer = event.target?.result as ArrayBuffer;
+				// Save the file to IndexedDB
+				if (db) {
+					saveBlob(db, 'recentFiles', file, $fileName);
+				}
 
-					$fileAsBlob = new Blob([fileArrayBuffer], { type: 'application/pdf' });
+				await load(file);
 
-					const loadingTask = pdfjs.getDocument({ data: fileArrayBuffer });
-					$processedFile = await loadingTask.promise;
-
-					// Save the file to IndexedDB
-					if (db) {
-						saveBlob(db, 'recentFiles', $fileAsBlob, $fileName);
-					}
-
-					await goto('/pdf');
-					isLoading = false;
-				};
-
-				reader.readAsArrayBuffer(file);
+				await goto('/pdf');
+				isLoading = false;
 			}
 		}
 	};
