@@ -3,7 +3,8 @@
 	import { openAndMergePDFs } from '$lib/utils/PDFEdition';
 	import { load } from '@/utils/PDFjsHelper';
 	import { save } from '@/utils/PDFLibHelper';
-	import { updatedFile } from '../../../stores/FileStore';
+	import { openedFile, updatedFile } from '../../../stores/FileStore';
+	import { addOCR } from '@/utils/OCR';
 
 	const mergePDF = () => {
 		const input = document.createElement('input');
@@ -15,13 +16,19 @@
 			const file = target.files ? target.files[0] : null;
 			if (file) {
 				$updatedFile = await openAndMergePDFs(file);
+
 				const binaryFile = await $updatedFile.save();
 				const blob = new Blob([binaryFile], { type: 'application/pdf' });
+
 				await load(blob);
 			}
 			input.remove();
 		};
 		input.click();
+	};
+
+	const runOCR = () => {
+		addOCR();
 	};
 </script>
 
@@ -45,6 +52,8 @@
 				Merge a PDF
 				<Menubar.Shortcut>⌘T</Menubar.Shortcut>
 			</Menubar.Item>
+
+			<Menubar.Item on:click={runOCR}>Optical Character Recognition (OCR)</Menubar.Item>
 		</Menubar.Content>
 	</Menubar.Menu>
 </Menubar.Root>

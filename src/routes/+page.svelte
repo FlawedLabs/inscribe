@@ -2,8 +2,9 @@
 	import { goto } from '$app/navigation';
 	import { saveBlob } from './utils/IndexDBUtils';
 	import PdfHistoryFile from './components/PdfHistoryFile.svelte';
-	import { fileName, openedFile } from '../stores/FileStore';
-	import { load } from '@/utils/PDFjsHelper';
+	import { fileName, openedFile, updatedFile } from '../stores/FileStore';
+	import * as PDFLibHelper from '@/utils/PDFLibHelper';
+	import * as PDFjsHelper from '@/utils/PDFjsHelper';
 
 	let file: File | null = null;
 	let isLoading: boolean = false;
@@ -53,7 +54,8 @@
 					saveBlob(db, 'recentFiles', file, $fileName);
 				}
 
-				await load(file);
+				$updatedFile = await PDFLibHelper.load(file);
+				await PDFjsHelper.load(file);
 
 				await goto('/pdf');
 				isLoading = false;
