@@ -11,6 +11,7 @@
 	import * as ContextMenu from '$lib/components/ui/context-menu/index';
 	import { Files, Trash } from 'lucide-svelte';
 	import { load } from '$lib/utils/PDFLibHelper';
+	import { load as loadPdf } from '@/utils/PDFjsHelper';
 
 	const PDF_SCALE = 1.3;
 
@@ -22,6 +23,8 @@
 
 	// By default, only render the first page
 	let isInView: boolean[];
+
+	let contextMenuPage: number;
 
 	let selectedPage = 1;
 
@@ -89,6 +92,13 @@
 
 			await page.render(renderContext).promise;
 		}
+	};
+
+	const removePage = async () => {
+		$updatedFile.removePage(contextMenuPage - 1);
+		const binaryFile = await $updatedFile.save();
+		const blob = new Blob([binaryFile], { type: 'application/pdf' });
+		await loadPdf(blob);
 	};
 
 	const loadPage = async (pageIndex: number) => {
@@ -166,6 +176,7 @@
 					{#each pages as page, i (page)}
 						<!-- svelte-ignore a11y-no-static-element-interactions -->
 						<div
+							on:contextmenu={() => (contextMenuPage = page)}
 							class={`thumbnail-sub-container px-4 pb-2 pt-3 rounded-md ${selectedPage === page ? 'bg-blue-200' : ''}`}
 						>
 							<a href="#page-{page}">
@@ -190,7 +201,10 @@
 				<ContextMenu.Item class="gap-2">
 					Duplicate <Files size={16} />
 				</ContextMenu.Item>
-				<ContextMenu.Item class="text-red-500 flex gap-2 hover:text-red-600">
+				<ContextMenu.Item
+					on:click={() => removePage()}
+					class="text-red-500 flex gap-2 hover:text-red-600"
+				>
 					Delete <Trash size={16} />
 					<ContextMenu.Shortcut>X</ContextMenu.Shortcut>
 				</ContextMenu.Item>
