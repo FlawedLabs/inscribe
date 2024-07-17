@@ -13,33 +13,55 @@ export const addOCR = async () => {
 
 	console.log(worker);
 
-	const PDFPagesAsImages = getCanvasAsImages(get(canvasList));
-
 	const OCRBlocks = [];
 
-	for (const page of PDFPagesAsImages) {
+	const canvasListArray = get(canvasList);
+
+	for (const page of canvasListArray) {
 		const res = await worker.recognize(page, { pdfTitle: 'testOCR' }, { pdf: true });
-		OCRBlocks.push(res.data.blocks);
+		OCRBlocks.push(res.data.words);
 	}
 
 	const fileToOCR = get(updatedFile);
 
 	const pages = fileToOCR.getPages();
 
-	OCRBlocks.forEach((blocks, i) => {
+	OCRBlocks.forEach((words, i) => {
 		const page = pages[i];
 
-		blocks?.forEach((block) => {
-			const { bbox, text } = block;
+		words?.forEach((word) => {
+			const { bbox, text } = word;
 			const { x0, x1, y0, y1 } = bbox;
 
-			console.log({ x0, x1, y0, y1 });
-			console.log(text);
+			const xHeightChars = 'acegmnorsuvwxz';
+			const heights: number[] = [];
+
+			words.forEach((word) => {
+				word.symbols.forEach((symbol) => {
+					if (xHeightChars.includes(symbol.text)) {
+						const { y0, y1 } = symbol.bbox;
+						heights.push(y1 - y0);
+					}
+				});
+			});
+
+			heights.sort((a, b) => a - b);
+			const medianHeight = heights[Math.floor(heights.length / 2)];
+
+			const pdfWidth = page.getWidth();
+			const pdfHeight = page.getHeight();
+			const canvasWidth = canvasListArray[i].width;
+			const canvasHeight = canvasListArray[i].height;
+
+			const x = (x0 / canvasWidth) * pdfWidth;
+			const y = pdfHeight - (y1 / canvasHeight) * pdfHeight;
+
+			console.log({ i, x0, x1, y0, y1 });
 
 			page.drawText(text, {
-				x: 133,
-				y: 100,
-				size: 10,
+				x: x,
+				y: y,
+				size: medianHeight,
 				color: rgb(0, 0, 0)
 			});
 		});
