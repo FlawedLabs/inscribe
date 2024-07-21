@@ -9,15 +9,23 @@ export const saveBlob = (db: IDBDatabase, storeName: string, blob: Blob | File, 
 		createdAt: new Date()
 	};
 
-	const request = store.add(fileRecord);
+	const allRequest = store.getAll();
+	allRequest.onsuccess = () => {
+		const allResult = allRequest.result;
+		const length = allResult.filter(value => value.name === fileRecord.name).length
+		
+		if(length === 0) {
+			const request = store.add(fileRecord);
 
-	request.onsuccess = () => {
-		console.log('File saved successfully');
-	};
-
-	request.onerror = (event) => {
-		console.error('Error saving file:', (event.target as IDBRequest).error);
-	};
+			request.onsuccess = () => {
+				console.log('File saved successfully');
+			};
+	
+			request.onerror = (event) => {
+				console.error('Error saving file:', (event.target as IDBRequest).error);
+			};
+		}
+	}
 };
 
 const handleRecentFiles = (db: IDBDatabase) => {
