@@ -1,10 +1,41 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { saveBlob } from './utils/IndexDBUtils';
+	import PdfHistoryFile from './components/PdfHistoryFile.svelte';
 	import { fileName, openedFile } from '../stores/FileStore';
 	import { load } from '@/utils/PDFjsHelper';
 
 	let file: File | null = null;
 	let isLoading: boolean = false;
+	let recentFiles: Array<RecentFile> = [];
+	let db: IDBDatabase | undefined;
+
+	const dbInit = indexedDB.open('inscribe', 1);
+
+	dbInit.onupgradeneeded = (event) => {
+		db = (event.target as IDBOpenDBRequest).result;
+
+		// Create the object store inside the onupgradeneeded event
+		if (!db.objectStoreNames.contains('recentFiles')) {
+			db.createObjectStore('recentFiles', { keyPath: 'id', autoIncrement: true });
+		}
+	};
+
+	dbInit.onsuccess = (event) => {
+		db = (event.target as IDBOpenDBRequest).result;
+		const request = db.transaction('recentFiles').objectStore('recentFiles').getAll();
+		request.onsuccess = () => {
+			recentFiles = request.result;
+		};
+
+		request.onerror = (err) => {
+			console.error(`Error to get student information: ${err}`);
+		};
+	};
+
+	dbInit.onerror = (event) => {
+		console.error('DB error:', (event.target as IDBOpenDBRequest).error);
+	};
 
 	const handleFileSelection = async (event: Event) => {
 		isLoading = true;
@@ -15,8 +46,12 @@
 
 			if (file) {
 				$fileName = file.name;
-
 				$openedFile = file;
+
+				// Save the file to IndexedDB
+				if (db) {
+					saveBlob(db, 'recentFiles', file, $fileName);
+				}
 
 				await load(file);
 
@@ -64,4 +99,11 @@
 			class="hidden"
 		/>
 	</label>
+	<div class="mr-6">
+		{#each recentFiles as file}
+			<div>
+				<PdfHistoryFile fileData={file}></PdfHistoryFile>
+			</div>
+		{/each}
+	</div>
 </div>
