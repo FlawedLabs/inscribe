@@ -11,7 +11,8 @@
 	import * as ContextMenu from '$lib/components/ui/context-menu/index';
 	import { Files, Trash } from 'lucide-svelte';
 	import { load } from '$lib/utils/PDFLibHelper';
-	import { load as loadPdf } from '@/utils/PDFjsHelper';
+	import { load as loadPDFjsHelper } from '@/utils/PDFjsHelper';
+	import { duplicatePage } from '@/utils/PDFEdition';
 
 	const PDF_SCALE = 1.3;
 
@@ -96,9 +97,18 @@
 
 	const removePage = async () => {
 		$updatedFile.removePage(contextMenuPage - 1);
+		await loadPdf();
+	};
+
+	const duplicate = async () => {
+		$updatedFile = await duplicatePage(contextMenuPage);
+		await loadPdf();
+	};
+
+	const loadPdf = async () => {
 		const binaryFile = await $updatedFile.save();
 		const blob = new Blob([binaryFile], { type: 'application/pdf' });
-		await loadPdf(blob);
+		await loadPDFjsHelper(blob);
 	};
 
 	const loadPage = async (pageIndex: number) => {
@@ -198,7 +208,7 @@
 			</ContextMenu.Trigger>
 
 			<ContextMenu.Content class="w-64">
-				<ContextMenu.Item class="gap-2">
+				<ContextMenu.Item on:click={() => duplicate()} class="gap-2">
 					Duplicate <Files size={16} />
 				</ContextMenu.Item>
 				<ContextMenu.Item
