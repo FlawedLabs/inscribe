@@ -29,7 +29,7 @@
 		};
 
 		request.onerror = (err) => {
-			console.error(`Error to get student information: ${err}`);
+			console.error(`Error to get recent file information: ${err}`);
 		};
 	};
 
@@ -51,10 +51,20 @@
 				// Save the file to IndexedDB
 				if (db) {
 					saveBlob(db, 'recentFiles', file, $fileName);
+					const request = db.transaction('recentFiles').objectStore('recentFiles').getAll();
+
+					request.onsuccess = async () => {
+						const files = request.result;
+						const existingFile: RecentFile[] = files.filter((value) => value.name === $fileName);
+
+						if (existingFile.length === 1) {
+							await load(existingFile[0].blob);
+							await goto('/pdf');
+							isLoading = false;
+						}
+					};
 				}
-
 				await load(file);
-
 				await goto('/pdf');
 				isLoading = false;
 			}
