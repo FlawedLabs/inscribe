@@ -22,3 +22,17 @@ export const openAndMergePDFs = async (file: Blob): Promise<PDFDocument> => {
 
 	return mergedPDF;
 };
+
+export const duplicatePage = async (contextMenuPage: number) => {
+	const newPdf = await PDFDocument.create();
+	const currentFile = get(updatedFile);
+
+	(await newPdf.copyPages(currentFile, currentFile.getPageIndices())).forEach((page) => {
+		newPdf.addPage(page);
+	});
+	
+	const [duplicatedPage] = await newPdf.copyPages(currentFile, [contextMenuPage - 1]);
+	newPdf.insertPage(contextMenuPage, duplicatedPage);
+
+	return newPdf
+}
