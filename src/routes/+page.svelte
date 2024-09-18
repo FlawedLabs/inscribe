@@ -5,11 +5,15 @@
 	import { fileName, openedFile, updatedFile } from '../stores/FileStore';
 	import * as PDFLibHelper from '@/utils/PDFLibHelper';
 	import * as PDFjsHelper from '@/utils/PDFjsHelper';
+	import * as pdfJS from 'pdfjs-dist';
+	import pdfJSWorkerURL from 'pdfjs-dist/legacy/build/pdf.worker.mjs?url';
 
 	let file: File | null = null;
 	let isLoading: boolean = false;
 	let recentFiles: Array<RecentFile> = [];
 	let db: IDBDatabase | undefined;
+
+	pdfJS.GlobalWorkerOptions.workerSrc = pdfJSWorkerURL;
 
 	const dbInit = indexedDB.open('inscribe', 1);
 
@@ -101,11 +105,17 @@
 			class="hidden"
 		/>
 	</label>
-	<div class="mr-6">
-		{#each recentFiles as file}
-			<div>
-				<PdfHistoryFile fileData={file}></PdfHistoryFile>
-			</div>
-		{/each}
-	</div>
+	<!-- <div class="mr-6">
+		{#await getPdfjsWorkerSetupPromise}
+			<p>Loading PDF.js...</p>
+		{:then}
+			{#each recentFiles as file}
+				<div>
+					<PdfHistoryFile fileData={file}></PdfHistoryFile>
+				</div>
+			{/each}
+		{:catch error}
+			<p>Error setting up PDF.js: {error.message}</p>
+		{/await}
+	</div> -->
 </div>

@@ -1,12 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import {
-		openedFile,
-		updatedFile,
-		fileName,
-		processedFile,
-		canvasList
-	} from '../../stores/FileStore';
+	import { openedFile, updatedFile, processedFile, canvasList } from '../../stores/FileStore';
 	import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 	import 'pdfjs-dist/web/pdf_viewer.css';
 	import { goto } from '$app/navigation';

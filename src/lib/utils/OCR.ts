@@ -1,7 +1,7 @@
 import { get } from 'svelte/store';
 import Tesseract from 'tesseract.js';
 import { canvasList, updatedFile } from '../../stores/FileStore';
-import { pdfDocEncodingDecode, rgb } from 'pdf-lib';
+import { rgb } from 'pdf-lib';
 export const addOCR = async () => {
 	const { createWorker } = Tesseract;
 
@@ -10,8 +10,6 @@ export const addOCR = async () => {
 		workerPath: '/node_modules/tesseract.js/dist/worker.min.js',
 		logger: (m) => console.log(m)
 	});
-
-	console.log(worker);
 
 	const OCRBlocks = [];
 
