@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { openedFile, updatedFile, fileName, processedFile } from '../../stores/FileStore';
+	import { openedFile, updatedFile, processedFile, canvasList } from '../../stores/FileStore';
 	import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 	import 'pdfjs-dist/web/pdf_viewer.css';
 	import { goto } from '$app/navigation';
@@ -15,12 +15,13 @@
 	import { duplicatePage } from '@/utils/PDFEdition';
 
 	const PDF_SCALE = 1.3;
+	const outputScale = window.devicePixelRatio || 1;
 
 	let pages: number[] = [];
 
-	let mainCanvas: HTMLCanvasElement[] = [];
 	let thumbnailsCanvas: HTMLCanvasElement[] = [];
 	let textLayerDiv: HTMLDivElement[] = [];
+	let pageDiv: HTMLDivElement[] = [];
 
 	// By default, only render the first page
 	let isInView: boolean[];
@@ -112,7 +113,7 @@
 	};
 
 	const loadPage = async (pageIndex: number) => {
-		// Prevent loading already loaded
+		// Prevent loading already loaded pages
 		if (!isInView[pageIndex]) {
 			console.log('Loading page', pageIndex);
 			isInView[pageIndex - 1] = true;
@@ -121,9 +122,14 @@
 			const page = await $processedFile.getPage(pageIndex);
 			const viewport = page.getViewport({ scale: PDF_SCALE });
 
-			const canvas = mainCanvas[pageIndex - 1];
-			canvas.width = viewport.width;
-			canvas.height = viewport.height;
+			const canvas = $canvasList[pageIndex - 1];
+
+			canvas.width = Math.floor(viewport.width * outputScale);
+			canvas.height = Math.floor(viewport.height * outputScale);
+
+			pageDiv[pageIndex - 1].style.width = Math.floor(viewport.width) + 'px';
+			pageDiv[pageIndex - 1].style.height = Math.floor(viewport.height) + 'px';
+
 			const ctx = canvas.getContext('2d')!;
 
 			const renderContext = {
@@ -225,10 +231,10 @@
 	<div class="pdfViewer flex-1 mt-18" style={`--scale-factor: ${PDF_SCALE};`}>
 		<div class="container flex flex-col items-center w-2/3">
 			{#each pages as page (page)}
-				<div id={`page-${page}`} class="page">
+				<div id={`page-${page}`} class="page" bind:this={pageDiv[page - 1]}>
 					<div class="canvasWrapper" use:inview on:inview_enter={() => onPageVisible(page)}>
 						{#if isInView[page - 1] === true}
-							<canvas bind:this={mainCanvas[page - 1]} class="shadow-lg"></canvas>
+							<canvas bind:this={$canvasList[page - 1]} class="shadow-lg"></canvas>
 						{:else}
 							<div class="w-full h-full flex items-center justify-center">
 								<div class="text-gray-400">Loading...</div>
