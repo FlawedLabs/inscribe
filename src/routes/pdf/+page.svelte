@@ -9,6 +9,7 @@
 		Download,
 		FilePlus2,
 		FileText,
+		Info,
 		Menu,
 		Minus,
 		Plus,
@@ -23,7 +24,7 @@
 		type RenderTask
 	} from 'pdfjs-dist/legacy/build/pdf.mjs';
 	import 'pdfjs-dist/web/pdf_viewer.css';
-	import { fileName, processedFile, updatedFile } from '../../stores/FileStore';
+	import { fileName, openedFile, processedFile, updatedFile } from '../../stores/FileStore';
 	import { parse as parsePDFjs } from '@/utils/PDFjsHelper';
 	import { save as savePDF } from '@/utils/PDFLibHelper';
 	import { mergePDFs, duplicatePage, removePage, reorderPage } from '@/utils/PDFEdition';
@@ -37,6 +38,22 @@
 	let pageElements: HTMLElement[] = [];
 	let mergeInput: HTMLInputElement;
 	let toolsButton: HTMLButtonElement;
+	let infoButton: HTMLButtonElement;
+	let infoDialog: HTMLDialogElement;
+	let importedMetadata: {
+		name: string;
+		size: string;
+		pages: number;
+		version: string;
+		title: string;
+		author: string;
+		subject: string;
+		keywords: string;
+		creator: string;
+		producer: string;
+		created: string;
+		modified: string;
+	} | null = null;
 	let selectedPage = 1;
 	let contextMenuPage: number | null = null;
 	let draggedPage: number | null = null;
@@ -55,10 +72,11 @@
 	let activeRender: RenderTask | undefined;
 
 	onMount(() => {
-		if (!$processedFile || !$updatedFile) {
+		if (!$processedFile || !$updatedFile || !$openedFile) {
 			void goto('/');
 			return;
 		}
+		void loadImportedMetadata($openedFile, $updatedFile, $processedFile);
 		sidebarOpen = window.innerWidth > 760;
 		const availableWidth =
 			window.innerWidth - (sidebarOpen ? 222 : 0) - (window.innerWidth <= 760 ? 32 : 100);
@@ -69,6 +87,80 @@
 			activeRender?.cancel();
 		};
 	});
+
+	const present = (value: string | undefined) => value?.trim() || 'Non renseigné';
+	const formatDate = (value: Date | undefined) => {
+		if (!value || Number.isNaN(value.getTime())) return 'Non renseignée';
+		return new Intl.DateTimeFormat('fr-FR', { dateStyle: 'long', timeStyle: 'short' }).format(
+			value
+		);
+	};
+	const formatSize = (bytes: number) => {
+		const unit = bytes >= 1024 * 1024 ? 'Mo' : bytes >= 1024 ? 'Ko' : 'octets';
+		const divisor = unit === 'Mo' ? 1024 * 1024 : unit === 'Ko' ? 1024 : 1;
+		return `${new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 1 }).format(bytes / divisor)} ${unit}`;
+	};
+	const loadImportedMetadata = async (
+		file: File,
+		document: PDFDocument,
+		viewer: PDFDocumentProxy
+	) => {
+		const original = {
+			name: file.name,
+			size: formatSize(file.size),
+			pages: document.getPageCount(),
+			version: 'Non renseignée',
+			title: present(document.getTitle()),
+			author: present(document.getAuthor()),
+			subject: present(document.getSubject()),
+			keywords: present(document.getKeywords()),
+			creator: present(document.getCreator()),
+			producer: present(document.getProducer()),
+			created: formatDate(document.getCreationDate()),
+			modified: formatDate(document.getModificationDate())
+		};
+		importedMetadata = original;
+		try {
+			const { info } = await viewer.getMetadata();
+			const values = info as Record<string, unknown>;
+			const fallback = (current: string, key: string) =>
+				current === 'Non renseigné' && typeof values[key] === 'string'
+					? present(values[key] as string)
+					: current;
+			importedMetadata = {
+				...original,
+				version:
+					typeof values.PDFFormatVersion === 'string'
+						? `PDF ${values.PDFFormatVersion}`
+						: original.version,
+				title: fallback(original.title, 'Title'),
+				author: fallback(original.author, 'Author'),
+				subject: fallback(original.subject, 'Subject'),
+				keywords: fallback(original.keywords, 'Keywords'),
+				creator: fallback(original.creator, 'Creator'),
+				producer: fallback(original.producer, 'Producer')
+			};
+		} catch {
+			// The file's basic properties remain available when its metadata dictionary is unreadable.
+		}
+	};
+	const openInfo = () => {
+		toolsOpen = false;
+		if (!infoDialog.open) infoDialog.showModal();
+	};
+	$: metadataRows = importedMetadata
+		? [
+				{ label: 'Version', value: importedMetadata.version },
+				{ label: 'Titre', value: importedMetadata.title },
+				{ label: 'Auteur', value: importedMetadata.author },
+				{ label: 'Sujet', value: importedMetadata.subject },
+				{ label: 'Mots-clés', value: importedMetadata.keywords },
+				{ label: 'Créé avec', value: importedMetadata.creator },
+				{ label: 'Producteur', value: importedMetadata.producer },
+				{ label: 'Date de création', value: importedMetadata.created },
+				{ label: 'Dernière modification', value: importedMetadata.modified }
+			]
+		: [];
 
 	$: if (mounted && $processedFile) void renderDocument($processedFile, scale, sidebarOpen);
 
@@ -352,6 +444,15 @@
 				disabled={busy}
 				aria-label="Ajouter un PDF"><FilePlus2 size={18} /> <span>Ajouter un PDF</span></button
 			>
+			<button
+				bind:this={infoButton}
+				class="icon-button info-button"
+				type="button"
+				on:click={openInfo}
+				aria-label="Informations sur le PDF"
+				aria-haspopup="dialog"
+				title="Informations sur le PDF"><Info size={20} strokeWidth={1.8} /></button
+			>
 			<div class="tools-wrap">
 				<button
 					bind:this={toolsButton}
@@ -393,6 +494,50 @@
 			>
 		</div>
 	</header>
+	<dialog
+		bind:this={infoDialog}
+		class="pdf-info-dialog"
+		aria-labelledby="pdf-info-title"
+		on:close={() => infoButton?.focus()}
+	>
+		<div class="pdf-info-header">
+			<div class="pdf-info-heading">
+				<span class="pdf-info-mark"><Info size={20} strokeWidth={1.8} /></span>
+				<div>
+					<span class="section-index">DOCUMENT IMPORTÉ</span>
+					<h2 id="pdf-info-title">Informations sur le PDF</h2>
+				</div>
+			</div>
+			<button
+				class="icon-button"
+				type="button"
+				on:click={() => infoDialog.close()}
+				aria-label="Fermer les informations"><X size={18} /></button
+			>
+		</div>
+		{#if importedMetadata}
+			<div class="pdf-info-file">
+				<FileText size={22} strokeWidth={1.7} />
+				<div>
+					<strong>{importedMetadata.name}</strong>
+					<span
+						>{importedMetadata.size} · {importedMetadata.pages}
+						{importedMetadata.pages === 1 ? 'page' : 'pages'}</span
+					>
+				</div>
+			</div>
+			<dl class="pdf-metadata-list">
+				{#each metadataRows as row}
+					<div>
+						<dt>{row.label}</dt>
+						<dd>{row.value}</dd>
+					</div>
+				{/each}
+			</dl>
+		{:else}
+			<p class="pdf-info-loading">Lecture des métadonnées…</p>
+		{/if}
+	</dialog>
 	<div class="editor-subbar">
 		<div class="subbar-left">
 			<button

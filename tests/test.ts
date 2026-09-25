@@ -87,3 +87,45 @@ test('restores page actions from the thumbnail context menu', async ({ page }) =
 	);
 	expect(exported.getPage(0).getWidth()).toBe(400);
 });
+
+test('shows metadata from the imported PDF after editing pages', async ({ page }) => {
+	const document = await PDFDocument.create();
+	document.addPage();
+	document.addPage();
+	document.setTitle('Contrat client');
+	document.setAuthor('Camille Martin');
+	document.setSubject('Dossier annuel');
+	document.setKeywords(['client', 'archives']);
+	document.setCreationDate(new Date('2020-01-02T12:00:00Z'));
+	await page.goto('/');
+	await page.getByLabel('Sélectionner un fichier PDF').setInputFiles({
+		name: 'contrat.pdf',
+		mimeType: 'application/pdf',
+		buffer: Buffer.from(await document.save())
+	});
+	await page.getByRole('button', { name: 'Informations sur le PDF' }).click();
+	const dialog = page.getByRole('dialog', { name: 'Informations sur le PDF' });
+	await expect(dialog).toBeVisible();
+	await expect(dialog.getByText('contrat.pdf')).toBeVisible();
+	await expect(dialog.getByText('2 pages')).toBeVisible();
+	await expect(dialog.getByText('Contrat client')).toBeVisible();
+	await expect(dialog.getByText('Camille Martin')).toBeVisible();
+	await expect(dialog.getByText('Dossier annuel')).toBeVisible();
+	await expect(dialog.getByText('PDF 1.7')).toBeVisible();
+	await expect(dialog.getByText('2020', { exact: false })).toBeVisible();
+	await page.keyboard.press('Escape');
+	await expect(dialog).not.toBeVisible();
+	await page.getByRole('button', { name: 'Dupliquer la page 1' }).click();
+	await expect(page.getByRole('button', { name: 'Aller à la page 3' })).toBeVisible();
+	await page.getByRole('button', { name: 'Informations sur le PDF' }).click();
+	await expect(dialog.getByText('2 pages')).toBeVisible();
+	await page.keyboard.press('Escape');
+	await page.setViewportSize({ width: 375, height: 700 });
+	const infoButton = await page
+		.getByRole('button', { name: 'Informations sur le PDF' })
+		.boundingBox();
+	expect(infoButton).not.toBeNull();
+	expect(infoButton!.x + infoButton!.width).toBeLessThanOrEqual(375);
+	await page.getByRole('button', { name: 'Informations sur le PDF' }).click();
+	await expect(dialog).toBeVisible();
+});
