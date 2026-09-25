@@ -15,6 +15,7 @@
 		FileText,
 		Highlighter,
 		Info,
+		LockKeyhole,
 		Menu,
 		Minus,
 		MessageSquarePlus,
@@ -45,6 +46,7 @@
 	} from '#lib/utils/PDFHighlights.js';
 	import ColorWheel from '#lib/components/ColorWheel.svelte';
 	import { applyOcrToPdf, type OcrLanguage, type OcrProgress } from '#lib/utils/OCR.js';
+	import { extractPDFText, type ExtractedPDFText } from '#lib/utils/PDFText.js';
 	import { ContextMenu } from 'bits-ui';
 
 	let pages: number[] = $state([]);
@@ -61,6 +63,12 @@
 	let toolsButton: HTMLButtonElement = $state(null!);
 	let infoButton: HTMLButtonElement = $state(null!);
 	let infoDialog: HTMLDialogElement = $state(null!);
+	let exportButton: HTMLButtonElement = $state(null!);
+	let exportDialog: HTMLDialogElement = $state(null!);
+	let exportPasswordInput: HTMLInputElement = $state(null!);
+	let exportPassword = $state('');
+	let exportPasswordConfirmation = $state('');
+	let exportError = $state('');
 	let deleteDialog: HTMLDialogElement = $state(null!);
 	let pageToDelete: number | null = $state(null);
 	let importedMetadata: {
@@ -98,6 +106,14 @@
 	let toolsOpen = $state(false);
 	let ocrLanguage: OcrLanguage = $state('fra');
 	let ocrProgress = $state('');
+	let textDialog: HTMLDialogElement = $state(null!);
+	let textArea: HTMLTextAreaElement = $state(null!);
+	let extractedText: ExtractedPDFText | null = $state(null);
+	let extractionProgress = $state('');
+	let extractionError = $state('');
+	let extractionFeedback = $state('');
+	let extractionRunning = $state(false);
+	let extractionController: AbortController | undefined;
 	let busy = $state(false);
 	let dirty = $state(false);
 	let status = $state('');
@@ -111,6 +127,7 @@
 	let renderLoopActive = false;
 	let renderAgain = false;
 	let scrollFrame = 0;
+	let syncPreviewOnNextFrame = false;
 	let notes: PDFNote[] = $state([]);
 	let noteMarkers: { id: string; page: number; text: string; left: number; top: number }[] = $state(
 		[]
@@ -167,6 +184,7 @@
 		window.addEventListener('resize', closeSidebarOnMobile);
 		mounted = true;
 		return () => {
+			extractionController?.abort();
 			window.removeEventListener('resize', closeSidebarOnMobile);
 			cancelAnimationFrame(scrollFrame);
 			refreshToken++;
@@ -331,9 +349,50 @@
 		void renderVisiblePages();
 	}
 
-	const scheduleVisibleRender = () => {
+	const keepThumbnailVisible = (pageNumber: number) => {
+		const list = window.document.querySelector<HTMLElement>('.thumbnail-list');
+		const thumbnail = list?.querySelectorAll<HTMLElement>('.thumbnail-item')[pageNumber - 1];
+		if (!list || !thumbnail) return;
+		const viewport = list.getBoundingClientRect();
+		const bounds = thumbnail.getBoundingClientRect();
+		const padding = 12;
+		if (bounds.top < viewport.top + padding) {
+			list.scrollTop += bounds.top - viewport.top - padding;
+		} else if (bounds.bottom > viewport.bottom - padding) {
+			list.scrollTop += bounds.bottom - viewport.bottom + padding;
+		}
+	};
+	const syncPageFromPreview = () => {
+		if (!documentStage || !pages.length) return;
+		const viewport = documentStage.getBoundingClientRect();
+		let currentPage = selectedPage;
+		let largestVisibleHeight = 0;
+		for (const pageNumber of pages) {
+			const bounds = pageSection(pageNumber)?.getBoundingClientRect();
+			if (!bounds) continue;
+			const visibleHeight = Math.max(
+				0,
+				Math.min(bounds.bottom, viewport.bottom) - Math.max(bounds.top, viewport.top)
+			);
+			if (visibleHeight > largestVisibleHeight) {
+				largestVisibleHeight = visibleHeight;
+				currentPage = pageNumber;
+			}
+		}
+		if (largestVisibleHeight && currentPage !== selectedPage) {
+			selectedPage = currentPage;
+			keepThumbnailVisible(currentPage);
+		}
+	};
+	const scheduleVisibleRender = (syncPreview = false) => {
+		syncPreviewOnNextFrame ||= syncPreview;
 		cancelAnimationFrame(scrollFrame);
-		scrollFrame = requestAnimationFrame(() => void renderVisiblePages());
+		scrollFrame = requestAnimationFrame(() => {
+			const shouldSyncPreview = syncPreviewOnNextFrame;
+			syncPreviewOnNextFrame = false;
+			if (shouldSyncPreview) syncPageFromPreview();
+			void renderVisiblePages();
+		});
 	};
 	const visiblePageNumbers = () => {
 		if (!documentStage) return [];
@@ -434,12 +493,12 @@
 				if (token !== refreshToken || renderAgain) continue;
 				for (const number of visibleThumbnailNumbers()) {
 					if (token !== refreshToken || renderAgain) break;
-					if (renderedThumbnails.has(number)) continue;
 					const canvas =
 						window.document.querySelectorAll<HTMLCanvasElement>('.thumbnail-item canvas')[
 							number - 1
 						];
 					if (!canvas) continue;
+					if (renderedThumbnails.has(number) && canvas.width > 0 && canvas.height > 0) continue;
 					try {
 						const page = await document.getPage(number);
 						if (token !== refreshToken) break;
@@ -450,6 +509,7 @@
 						await task.promise;
 						if (activeRender === task) activeRender = undefined;
 						if (token !== refreshToken) break;
+						if (!canvas.isConnected || !sidebarOpen) continue;
 						renderedThumbnails = new Set([...renderedThumbnails, number]);
 					} catch (cause) {
 						activeRender = undefined;
@@ -633,11 +693,41 @@
 		mergeInput.value = '';
 	};
 
-	const save = () =>
+	const save = () => {
+		exportError = '';
+		exportDialog.showModal();
+		exportPasswordInput.focus();
+	};
+	const savePlain = () => {
+		exportDialog.close();
 		void runAction(async () => {
 			await savePDF();
 			dirty = false;
 		}, 'PDF exporté dans vos téléchargements.');
+	};
+	const saveProtected = async () => {
+		if (busy) return;
+		if (!exportPassword || exportPassword !== exportPasswordConfirmation) {
+			exportError = exportPassword
+				? 'Les mots de passe ne correspondent pas.'
+				: 'Saisissez un mot de passe.';
+			return;
+		}
+		busy = true;
+		exportError = '';
+		error = '';
+		status = '';
+		try {
+			await savePDF(exportPassword);
+			dirty = false;
+			status = 'PDF protégé exporté dans vos téléchargements.';
+			exportDialog.close();
+		} catch {
+			exportError = 'Le PDF protégé n’a pas pu être créé. Réessayez.';
+		} finally {
+			busy = false;
+		}
+	};
 	const describeOcrProgress = (progress: OcrProgress) => {
 		switch (progress.phase) {
 			case 'checking':
@@ -682,6 +772,59 @@
 			ocrProgress = '';
 			busy = false;
 		}
+	};
+	const openTextExtraction = async () => {
+		if (busy) return;
+		toolsOpen = false;
+		extractedText = null;
+		extractionError = '';
+		extractionFeedback = '';
+		extractionProgress = `Extraction de la page 1 sur ${fileSession.processedFile.numPages}…`;
+		extractionController = new AbortController();
+		extractionRunning = true;
+		busy = true;
+		textDialog.showModal();
+		try {
+			extractedText = await extractPDFText(
+				fileSession.processedFile,
+				(page, total) => {
+					extractionProgress = `Extraction de la page ${page} sur ${total}…`;
+				},
+				extractionController.signal
+			);
+		} catch (cause) {
+			if (!(cause instanceof DOMException && cause.name === 'AbortError'))
+				extractionError = 'Le texte n’a pas pu être extrait. Réessayez.';
+		} finally {
+			extractionProgress = '';
+			extractionRunning = false;
+			busy = false;
+			extractionController = undefined;
+		}
+	};
+	const copyExtractedText = async () => {
+		if (!extractedText?.text) return;
+		try {
+			await navigator.clipboard.writeText(extractedText.text);
+		} catch {
+			textArea.select();
+			if (!window.document.execCommand('copy')) {
+				extractionFeedback = 'Copie impossible. Sélectionnez le texte et copiez-le manuellement.';
+				return;
+			}
+		}
+		extractionFeedback = 'Texte copié dans le presse-papiers.';
+	};
+	const downloadExtractedText = () => {
+		if (!extractedText?.text) return;
+		const blob = new Blob([extractedText.text], { type: 'text/plain;charset=utf-8' });
+		const link = window.document.createElement('a');
+		link.href = URL.createObjectURL(blob);
+		link.download = `${fileSession.fileName.replace(/\.pdf$/i, '')}.txt`;
+		link.click();
+		link.remove();
+		setTimeout(() => URL.revokeObjectURL(link.href), 7000);
+		extractionFeedback = 'Texte téléchargé au format .txt.';
 	};
 	const back = () => {
 		if (busy) return;
@@ -944,7 +1087,13 @@
 		if (mounted && document) untrack(() => void renderDocument(document, zoom));
 	});
 	$effect(() => {
-		if (mounted && sidebarOpen) void tick().then(scheduleVisibleRender);
+		if (!mounted) return;
+		renderedThumbnails.clear();
+		if (sidebarOpen)
+			void tick().then(() => {
+				keepThumbnailVisible(selectedPage);
+				scheduleVisibleRender();
+			});
 	});
 </script>
 
@@ -1042,14 +1191,14 @@
 					class="icon-button tools-button [border:1px_solid_transparent] bg-transparent [color:var(--ink)] rounded-[7px] min-w-[38px] h-[38px] inline-flex items-center justify-center gap-[8px] [&:hover]:[background:#eef1eb]"
 					type="button"
 					onclick={() => (toolsOpen = !toolsOpen)}
-					aria-label="Autres outils"
+					aria-label="Outils texte : OCR et extraction"
 					aria-haspopup="true"
 					aria-expanded={toolsOpen}
-					title="Autres outils"><Menu size={20} /></button
+					title="Outils texte : OCR et extraction"><ScanText size={20} strokeWidth={1.9} /></button
 				>{#if toolsOpen}<div
 						class="tools-popover absolute right-[0] top-[44px] z-[20] w-[min(300px,_calc(100vw_-_24px))] p-[18px] [background:var(--paper)] [border:1px_solid_var(--line)] rounded-[8px] [box-shadow:0_12px_30px_#24342822] [&_strong]:flex [&_strong]:items-center [&_strong]:gap-[8px] [&_strong]:text-[13px] [&_p]:m-[10px_0_16px] [&_p]:[color:var(--muted-ink)] [&_p]:text-[12px] [&_p]:leading-[1.55] [&_label]:block [&_label]:mb-[7px] [&_label]:text-[11px] [&_label]:font-extrabold [&_select]:w-full [&_select]:min-h-[38px] [&_select]:p-[0_9px] [&_select]:[border:1px_solid_var(--line)] [&_select]:rounded-[6px] [&_select]:bg-white [&_select]:[color:var(--ink)] [&_select]:text-[12px] [&_small]:block [&_small]:mt-[11px] [&_small]:[color:var(--muted-ink)] [&_small]:text-[10px] [&_small]:leading-[1.5] [&_button.ocr-start]:w-full [&_button.ocr-start]:flex [&_button.ocr-start]:justify-center [&_button.ocr-start]:p-[10px] [&_button.ocr-start]:mt-[16px] [&_button.ocr-start]:[background:var(--accent)] [&_button.ocr-start]:text-white [&_button.ocr-start]:border-0 [&_button.ocr-start]:rounded-[5px] [&_button.ocr-start]:text-[12px] [&_button.ocr-start]:font-extrabold [&_button.ocr-start:hover]:[background:var(--accent-dark)]"
 						role="group"
-						aria-label="Reconnaissance de texte"
+						aria-label="Outils texte"
 					>
 						<strong><ScanText size={17} /> Reconnaître le texte</strong>
 						<p>Ajoute du texte sélectionnable aux pages qui n’en contiennent pas.</p>
@@ -1066,17 +1215,245 @@
 						<button class="ocr-start" type="button" onclick={ocr} disabled={busy}
 							>Lancer l’OCR</button
 						>
+						<div class="mt-4 border-t [border-color:var(--line)] pt-4">
+							<strong><FileText size={17} /> Extraire le texte</strong>
+							<p>Récupère le texte de toutes les pages pour le copier ou le télécharger.</p>
+							<button
+								type="button"
+								onclick={() => void openTextExtraction()}
+								disabled={busy}
+								class="flex min-h-10 w-full items-center justify-center gap-2 rounded-[6px] border [border-color:var(--line)] bg-white text-[12px] font-extrabold [color:var(--ink)] hover:[background:#eef1eb] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:[outline-color:var(--ring)]"
+								><FileText size={16} /> Extraire tout le texte</button
+							>
+						</div>
 					</div>{/if}
 			</div>
 			<button
+				bind:this={exportButton}
 				class="export-button min-h-[44px] inline-flex items-center justify-center gap-[10px] p-[0_19px] border-0 rounded-[7px] [background:var(--accent)] text-white text-[13px] font-extrabold [transition:background_0.15s,_transform_0.15s] [&:hover]:[background:var(--accent-dark)] min-h-[39px] text-[12px] max-[760px]:p-[0_11px] max-[760px]:[&_span]:hidden"
 				type="button"
 				onclick={save}
 				disabled={busy}
+				aria-haspopup="dialog"
 				aria-label="Exporter le PDF"><Download size={18} /><span>Exporter le PDF</span></button
 			>
 		</div>
 	</header>
+	<dialog
+		bind:this={textDialog}
+		class="w-[min(680px,_calc(100vw_-_32px))] max-h-[calc(100vh_-_32px)] m-auto p-0 flex-col [&[open]]:flex [border:1px_solid_var(--line)] rounded-[12px] [background:var(--paper)] [color:var(--ink)] [box-shadow:0_24px_70px_#17241c40] [&::backdrop]:[background:#17241c99]"
+		aria-labelledby="text-dialog-title"
+		onclose={() => {
+			extractionController?.abort();
+			toolsButton?.focus();
+		}}
+	>
+		<div
+			class="flex items-center justify-between gap-4 border-b [border-color:var(--line)] px-6 py-5"
+		>
+			<div class="flex items-center gap-3">
+				<span
+					class="grid size-10 place-items-center rounded-[9px] [background:#e4eee6] [color:var(--accent)]"
+					><FileText size={20} /></span
+				>
+				<div>
+					<span class="text-[10px] font-extrabold tracking-[0.14em] [color:var(--accent)]"
+						>OUTILS TEXTE</span
+					>
+					<h2 id="text-dialog-title" class="mt-1 text-[17px] font-extrabold">Texte du document</h2>
+				</div>
+			</div>
+			<button
+				type="button"
+				onclick={() => textDialog.close()}
+				aria-label="Fermer le texte extrait"
+				class="grid size-10 place-items-center rounded-[7px] hover:[background:#eef1eb] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:[outline-color:var(--ring)]"
+				><X size={18} /></button
+			>
+		</div>
+		<div class="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+			{#if extractionRunning}
+				<p role="status" class="text-[13px] font-bold [color:var(--accent)]">
+					{extractionProgress}
+				</p>
+			{:else if extractionError}
+				<p role="alert" class="text-[13px] font-bold [color:#a4492e]">{extractionError}</p>
+			{:else if extractedText}
+				<p class="mb-3 text-[12px] [color:var(--muted-ink)]">
+					{extractedText.pagesWithText}
+					{extractedText.pagesWithText === 1 ? 'page avec texte' : 'pages avec texte'} sur {pages.length}
+				</p>
+				{#if extractedText.pagesWithoutText.length}
+					<p
+						role="status"
+						class="mb-4 rounded-[7px] [background:#fff4e7] px-3 py-2 text-[12px] leading-[1.5] [color:#7b4a19]"
+					>
+						{extractedText.pagesWithoutText.length}
+						{extractedText.pagesWithoutText.length === 1
+							? 'page ne contient'
+							: 'pages ne contiennent'} pas de texte détectable. Pour un scan, lancez l’OCR puis relancez
+						l’extraction.
+					</p>
+				{/if}
+				{#if extractedText.text}
+					<label for="extracted-document-text" class="mb-2 block text-[12px] font-extrabold"
+						>Texte extrait, par page</label
+					>
+					<textarea
+						id="extracted-document-text"
+						bind:this={textArea}
+						readonly
+						spellcheck="false"
+						value={extractedText.text}
+						class="h-[min(50vh,_400px)] min-h-[180px] w-full resize-y rounded-[7px] border [border-color:var(--line)] bg-white p-3 font-mono text-[12px] leading-[1.6] [color:var(--ink)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:[outline-color:var(--ring)] max-[520px]:h-[240px]"
+					></textarea>
+				{:else}
+					<p class="text-[13px] leading-[1.5] [color:var(--muted-ink)]">
+						Aucun texte à copier ou à télécharger dans ce document.
+					</p>
+				{/if}
+			{/if}
+		</div>
+		<div
+			class="flex flex-none flex-wrap items-center justify-end gap-2 border-t [border-color:var(--line)] px-6 py-4 max-[520px]:[&_button]:w-full max-[520px]:[&_button]:justify-center"
+		>
+			{#if extractionFeedback}<span
+					role="status"
+					class="mr-auto text-[11px] font-bold [color:var(--accent)]">{extractionFeedback}</span
+				>{/if}
+			<button
+				type="button"
+				onclick={copyExtractedText}
+				disabled={!extractedText?.text || extractionRunning}
+				class="inline-flex min-h-10 items-center gap-2 rounded-[7px] border [border-color:var(--line)] px-3 text-[12px] font-extrabold hover:[background:#eef1eb] disabled:opacity-50"
+				><Copy size={16} /> Copier le texte</button
+			>
+			<button
+				type="button"
+				onclick={downloadExtractedText}
+				disabled={!extractedText?.text || extractionRunning}
+				class="inline-flex min-h-10 items-center gap-2 rounded-[7px] [background:var(--accent)] px-3 text-[12px] font-extrabold text-white hover:[background:var(--accent-dark)] disabled:opacity-50"
+				><Download size={16} /> Télécharger le .txt</button
+			>
+		</div>
+	</dialog>
+	<dialog
+		bind:this={exportDialog}
+		class="w-[min(440px,_calc(100vw_-_32px))] max-h-[calc(100vh_-_32px)] m-auto p-0 [border:1px_solid_var(--line)] rounded-[12px] [background:var(--paper)] [color:var(--ink)] [box-shadow:0_24px_70px_#17241c40] [&::backdrop]:[background:#17241c99]"
+		aria-labelledby="export-dialog-title"
+		oncancel={(event) => {
+			if (busy) event.preventDefault();
+		}}
+		onclose={() => {
+			exportPassword = '';
+			exportPasswordConfirmation = '';
+			exportError = '';
+			exportButton?.focus();
+		}}
+	>
+		<form
+			onsubmit={(event) => {
+				event.preventDefault();
+				void saveProtected();
+			}}
+		>
+			<div
+				class="flex items-center justify-between gap-4 border-b [border-color:var(--line)] px-6 py-5"
+			>
+				<div class="flex items-center gap-3">
+					<span
+						class="grid size-10 place-items-center rounded-[9px] [background:#e4eee6] [color:var(--accent)]"
+						><LockKeyhole size={20} /></span
+					>
+					<div>
+						<span class="text-[10px] font-extrabold tracking-[0.14em] [color:var(--accent)]"
+							>EXPORT PDF</span
+						>
+						<h2 id="export-dialog-title" class="mt-1 text-[17px] font-extrabold">
+							Exporter le document
+						</h2>
+					</div>
+				</div>
+				<button
+					type="button"
+					onclick={() => exportDialog.close()}
+					disabled={busy}
+					aria-label="Fermer l’export"
+					class="grid size-10 place-items-center rounded-[7px] [color:var(--ink)] hover:[background:#eef1eb] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:[outline-color:var(--ring)]"
+					><X size={18} /></button
+				>
+			</div>
+			<div class="px-6 py-5">
+				<p class="mb-4 text-[12px] leading-[1.55] [color:var(--muted-ink)]">
+					Téléchargez le PDF tel quel ou protégez son ouverture par un mot de passe.
+				</p>
+				<button
+					type="button"
+					onclick={savePlain}
+					disabled={busy}
+					class="flex min-h-11 w-full items-center justify-center gap-2 rounded-[7px] border [border-color:var(--line)] text-[12px] font-extrabold [color:var(--ink)] hover:[background:#eef1eb] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:[outline-color:var(--ring)]"
+					><Download size={17} /> Télécharger sans mot de passe</button
+				>
+				<div
+					class="my-5 flex items-center gap-3 text-[11px] [color:var(--muted-ink)] before:h-px before:flex-1 before:[background:var(--line)] after:h-px after:flex-1 after:[background:var(--line)]"
+				>
+					OU
+				</div>
+				<div class="space-y-3">
+					<div>
+						<label for="export-password" class="mb-1.5 block text-[12px] font-extrabold"
+							>Mot de passe d’ouverture</label
+						>
+						<input
+							id="export-password"
+							bind:this={exportPasswordInput}
+							bind:value={exportPassword}
+							oninput={() => (exportError = '')}
+							type="password"
+							autocomplete="new-password"
+							class="min-h-11 w-full rounded-[7px] border [border-color:var(--line)] bg-white px-3 text-[14px] [color:var(--ink)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:[outline-color:var(--ring)]"
+						/>
+					</div>
+					<div>
+						<label
+							for="export-password-confirmation"
+							class="mb-1.5 block text-[12px] font-extrabold">Confirmer le mot de passe</label
+						>
+						<input
+							id="export-password-confirmation"
+							bind:value={exportPasswordConfirmation}
+							oninput={() => (exportError = '')}
+							type="password"
+							autocomplete="new-password"
+							class="min-h-11 w-full rounded-[7px] border [border-color:var(--line)] bg-white px-3 text-[14px] [color:var(--ink)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:[outline-color:var(--ring)]"
+						/>
+					</div>
+					<p class="text-[11px] leading-[1.5] [color:var(--muted-ink)]">
+						Conservez ce mot de passe : Inscribe ne pourra pas le récupérer. Vous en aurez besoin
+						pour rouvrir ce PDF.
+					</p>
+					{#if exportError}<p role="alert" class="text-[12px] font-bold [color:#a4492e]">
+							{exportError}
+						</p>{/if}
+				</div>
+			</div>
+			<div class="flex justify-end gap-2 border-t [border-color:var(--line)] px-6 py-4">
+				<button
+					type="button"
+					onclick={() => exportDialog.close()}
+					disabled={busy}
+					class="min-h-10 rounded-[7px] border [border-color:var(--line)] px-4 text-[12px] font-extrabold hover:[background:#eef1eb]"
+					>Annuler</button
+				>
+				<button
+					type="submit"
+					disabled={busy}
+					class="min-h-10 rounded-[7px] [background:var(--accent)] px-4 text-[12px] font-extrabold text-white hover:[background:var(--accent-dark)] disabled:opacity-60"
+					>{busy ? 'Protection…' : 'Protéger et télécharger'}</button
+				>
+			</div>
+		</form>
+	</dialog>
 	<dialog
 		bind:this={infoDialog}
 		class="pdf-info-dialog w-[min(480px,_calc(100vw_-_32px))] max-h-[calc(100vh_-_32px)] m-auto p-0 [border:1px_solid_var(--line)] rounded-[12px] [background:var(--paper)] [color:var(--ink)] [box-shadow:0_24px_70px_#17241c40] [&::backdrop]:[background:#17241c99]"
@@ -1259,7 +1636,7 @@
 				class="subbar-label [color:var(--accent)] font-extrabold text-[10px] tracking-[0.13em] max-[760px]:hidden"
 				>ÉDITION DU DOCUMENT</span
 			><span class="subbar-divider w-[1px] h-[14px] [background:#ced2c9] max-[760px]:hidden"
-			></span><span>{pages.length} {pages.length === 1 ? 'page' : 'pages'}</span>
+			></span><span>Page {selectedPage} sur {pages.length}</span>
 		</div>
 		<div
 			class="zoom-controls flex items-center gap-[3px] [&_span]:min-w-[50px] [&_span]:text-center [&_span]:text-[11px] [&_span]:font-extrabold [&_span]:[color:var(--ink)] [&_.icon-button]:h-[30px] [&_.icon-button]:min-w-[30px]"
@@ -1369,7 +1746,7 @@
 		{#if sidebarOpen}<aside
 				class="page-sidebar w-[222px] flex-none min-h-[0] flex flex-col [background:#f6f6f2] [border-right:1px_solid_var(--line)] max-[760px]:absolute max-[760px]:z-[10] max-[760px]:top-[111px] max-[760px]:bottom-[0] max-[760px]:w-[min(78vw,_250px)] max-[760px]:[box-shadow:12px_0_20px_#24342817]"
 				aria-label="Pages du document"
-				onscrollcapture={scheduleVisibleRender}
+				onscrollcapture={() => scheduleVisibleRender()}
 			>
 				<div
 					class="sidebar-heading [color:var(--accent)] font-extrabold text-[10px] tracking-[0.13em] p-[21px_22px_15px] flex justify-between"
@@ -1451,7 +1828,7 @@
 			class="document-stage flex-1 min-w-0 overflow-auto scroll-smooth [touch-action:pan-x_pan-y] overscroll-contain [&.pinching]:scroll-auto motion-reduce:scroll-auto"
 			class:pinching={pinch !== null || pendingZoomAnchor !== null}
 			aria-label="Aperçu du document"
-			onscroll={scheduleVisibleRender}
+			onscroll={() => scheduleVisibleRender(true)}
 			{@attach pinchListeners}
 			ontouchend={endPinch}
 			ontouchcancel={endPinch}

@@ -91,6 +91,7 @@ test('opens, reorders, and exports a PDF while preserving its form', async ({ pa
 	await expect(page.getByText('L’opération a échoué.')).toHaveCount(0);
 	const downloadPromise = page.waitForEvent('download');
 	await page.getByRole('button', { name: 'Exporter le PDF' }).click();
+	await page.getByRole('button', { name: 'Télécharger sans mot de passe' }).click();
 	const download = await downloadPromise;
 	const exported = await PDFDocument.load(
 		await (await import('node:fs/promises')).readFile(await download.path())
@@ -116,6 +117,7 @@ test('reorders thumbnails after moving a page in the main preview', async ({ pag
 	await expect(page.getByText('Ordre des pages modifié.')).toBeVisible();
 	const firstDownloadPromise = page.waitForEvent('download');
 	await page.getByRole('button', { name: 'Exporter le PDF' }).click();
+	await page.getByRole('button', { name: 'Télécharger sans mot de passe' }).click();
 	const firstDownload = await firstDownloadPromise;
 	const firstExport = await PDFDocument.load(
 		await (await import('node:fs/promises')).readFile(await firstDownload.path())
@@ -127,6 +129,7 @@ test('reorders thumbnails after moving a page in the main preview', async ({ pag
 	await expect(page.getByText('L’opération a échoué.')).toHaveCount(0);
 	const downloadPromise = page.waitForEvent('download');
 	await page.getByRole('button', { name: 'Exporter le PDF' }).click();
+	await page.getByRole('button', { name: 'Télécharger sans mot de passe' }).click();
 	const download = await downloadPromise;
 	const exported = await PDFDocument.load(
 		await (await import('node:fs/promises')).readFile(await download.path())
@@ -200,6 +203,7 @@ test('restores page actions from the thumbnail context menu', async ({ page }) =
 	await expect(page.getByRole('button', { name: 'Supprimer la page 1' })).toBeDisabled();
 	const downloadPromise = page.waitForEvent('download');
 	await page.getByRole('button', { name: 'Exporter le PDF' }).click();
+	await page.getByRole('button', { name: 'Télécharger sans mot de passe' }).click();
 	const download = await downloadPromise;
 	const exported = await PDFDocument.load(
 		await (await import('node:fs/promises')).readFile(await download.path())

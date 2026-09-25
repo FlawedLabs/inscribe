@@ -6,8 +6,10 @@
 		Clock3,
 		FileText,
 		FolderOpen,
+		LockKeyhole,
 		ShieldCheck,
-		UploadCloud
+		UploadCloud,
+		X
 	} from '@lucide/svelte';
 	import { fileSession } from '../stores/FileStore.svelte';
 	import * as PDFLibHelper from '#lib/utils/PDFLibHelper.js';
@@ -24,6 +26,11 @@
 	let isLoading = $state(false);
 	let isDragging = $state(false);
 	let error = $state('');
+	let passwordDialog: HTMLDialogElement = $state(null!);
+	let passwordInput: HTMLInputElement = $state(null!);
+	let protectedFile: { file: File; remember: boolean } | null = $state(null);
+	let openingPassword = $state('');
+	let passwordError = $state('');
 
 	pdfJS.GlobalWorkerOptions.workerSrc = pdfJSWorkerURL;
 
@@ -50,7 +57,7 @@
 		};
 	});
 
-	const openPdf = async (file: File, remember = true) => {
+	const openPdf = async (file: File, remember = true, password?: string) => {
 		if (isLoading) return;
 		if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
 			error = 'Choisissez un fichier PDF pour continuer.';
@@ -59,11 +66,17 @@
 		isLoading = true;
 		error = '';
 		try {
-			const document = await PDFLibHelper.load(file);
-			const preview = await PDFjsHelper.parse(file);
+			let workingFile = file;
+			if (password !== undefined) {
+				const { decryptPDF } = await import('@pdfsmaller/pdf-decrypt');
+				const bytes = await decryptPDF(new Uint8Array(await file.arrayBuffer()), password);
+				workingFile = new File([new Uint8Array(bytes)], file.name, { type: 'application/pdf' });
+			}
+			const document = await PDFLibHelper.load(workingFile);
+			const preview = await PDFjsHelper.parse(workingFile);
 			const previousPreview = fileSession.processedFile;
 			fileSession.fileName = file.name;
-			fileSession.openedFile = file;
+			fileSession.openedFile = workingFile;
 			fileSession.updatedFile = document;
 			fileSession.processedFile = preview;
 			if (previousPreview && previousPreview !== preview)
@@ -76,13 +89,36 @@
 					/* Editing remains available when history cannot be saved. */
 				}
 			}
+			if (passwordDialog?.open) passwordDialog.close();
 			await goto('/pdf');
-		} catch {
-			error =
-				'Impossible d’ouvrir ce PDF. Vérifiez qu’il n’est pas endommagé ou protégé par mot de passe.';
+		} catch (cause) {
+			if (
+				password === undefined &&
+				cause instanceof Error &&
+				/Input document.*is encrypted/i.test(cause.message)
+			) {
+				protectedFile = { file, remember };
+				passwordError = '';
+				openingPassword = '';
+				passwordDialog.showModal();
+				passwordInput.focus();
+			} else if (password !== undefined) {
+				passwordError =
+					cause instanceof Error && /incorrect password/i.test(cause.message)
+						? 'Mot de passe incorrect. Réessayez.'
+						: 'Ce PDF protégé ne peut pas être ouvert.';
+			} else {
+				error = 'Impossible d’ouvrir ce PDF. Vérifiez qu’il n’est pas endommagé.';
+			}
 		} finally {
 			isLoading = false;
 			if (input) input.value = '';
+		}
+	};
+	const submitPassword = () => {
+		if (protectedFile && openingPassword) {
+			passwordError = '';
+			void openPdf(protectedFile.file, protectedFile.remember, openingPassword);
 		}
 	};
 
@@ -115,6 +151,83 @@
 	<title>Inscribe — Votre espace PDF</title>
 	<meta name="description" content="Ouvrez et organisez vos documents PDF dans Inscribe." />
 </svelte:head>
+
+<dialog
+	bind:this={passwordDialog}
+	class="w-[min(420px,_calc(100vw_-_32px))] m-auto p-0 rounded-[12px] [border:1px_solid_var(--line)] [background:var(--paper)] [color:var(--ink)] [box-shadow:0_24px_70px_#17241c40] [&::backdrop]:[background:#17241c99]"
+	aria-labelledby="open-password-title"
+	oncancel={(event) => {
+		if (isLoading) event.preventDefault();
+	}}
+	onclose={() => {
+		protectedFile = null;
+		openingPassword = '';
+		passwordError = '';
+	}}
+>
+	<form
+		onsubmit={(event) => {
+			event.preventDefault();
+			submitPassword();
+		}}
+	>
+		<div
+			class="flex items-center justify-between gap-3 border-b [border-color:var(--line)] px-6 py-5"
+		>
+			<div class="flex items-center gap-3">
+				<span
+					class="grid size-10 place-items-center rounded-[9px] [background:#e4eee6] [color:var(--accent)]"
+					><LockKeyhole size={20} /></span
+				>
+				<h2 id="open-password-title" class="text-[17px] font-extrabold">PDF protégé</h2>
+			</div>
+			<button
+				type="button"
+				onclick={() => passwordDialog.close()}
+				disabled={isLoading}
+				aria-label="Fermer"
+				class="grid size-10 place-items-center rounded-[7px] hover:[background:#eef1eb] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:[outline-color:var(--ring)]"
+				><X size={18} /></button
+			>
+		</div>
+		<div class="space-y-3 px-6 py-5">
+			<p class="wrap-anywhere text-[12px] leading-[1.5] [color:var(--muted-ink)]">
+				Saisissez le mot de passe pour ouvrir {protectedFile?.file.name}.
+			</p>
+			<label for="open-password" class="block text-[12px] font-extrabold"
+				>Mot de passe d’ouverture</label
+			>
+			<input
+				id="open-password"
+				bind:this={passwordInput}
+				bind:value={openingPassword}
+				oninput={() => (passwordError = '')}
+				type="password"
+				autocomplete="current-password"
+				required
+				class="min-h-11 w-full rounded-[7px] border [border-color:var(--line)] bg-white px-3 text-[14px] [color:var(--ink)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:[outline-color:var(--ring)]"
+			/>
+			{#if passwordError}<p role="alert" class="text-[12px] font-bold [color:#a4492e]">
+					{passwordError}
+				</p>{/if}
+		</div>
+		<div class="flex justify-end gap-2 border-t [border-color:var(--line)] px-6 py-4">
+			<button
+				type="button"
+				onclick={() => passwordDialog.close()}
+				disabled={isLoading}
+				class="min-h-10 rounded-[7px] border [border-color:var(--line)] px-4 text-[12px] font-extrabold hover:[background:#eef1eb]"
+				>Annuler</button
+			>
+			<button
+				type="submit"
+				disabled={isLoading || !openingPassword}
+				class="min-h-10 rounded-[7px] [background:var(--accent)] px-4 text-[12px] font-extrabold text-white hover:[background:var(--accent-dark)] disabled:opacity-60"
+				>{isLoading ? 'Ouverture…' : 'Ouvrir le PDF'}</button
+			>
+		</div>
+	</form>
+</dialog>
 
 <div class="home-shell min-h-[100vh] flex flex-col">
 	<header

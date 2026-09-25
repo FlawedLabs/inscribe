@@ -62,6 +62,7 @@ test('highlights selected PDF text with a preset and a custom wheel color', asyn
 	await expect(page.locator('.highlight-rect')).toHaveCount(2);
 	const downloadPromise = page.waitForEvent('download');
 	await page.getByRole('button', { name: 'Exporter le PDF' }).click();
+	await page.getByRole('button', { name: 'Télécharger sans mot de passe' }).click();
 	const download = await downloadPromise;
 	const exported = await PDFDocument.load(await readFile(await download.path()));
 	const highlights = listHighlights(exported);

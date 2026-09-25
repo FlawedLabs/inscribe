@@ -48,6 +48,7 @@ test('adds, edits, exports, and reopens a note on desktop and mobile', async ({ 
 
 	const downloadPromise = page.waitForEvent('download');
 	await page.getByRole('button', { name: 'Exporter le PDF' }).click();
+	await page.getByRole('button', { name: 'Télécharger sans mot de passe' }).click();
 	const download = await downloadPromise;
 	const exported = await PDFDocument.load(await readFile(await download.path()));
 	expect(listNotes(exported)).toMatchObject([{ page: 1, text: 'Signature validée' }]);

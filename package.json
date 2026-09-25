@@ -28,6 +28,8 @@
 		"@fontsource/mulish": "^5.3.0",
 		"@internationalized/date": "^3.12.4",
 		"@lucide/svelte": "^1.48.0",
+		"@pdfsmaller/pdf-decrypt": "^1.0.1",
+		"@pdfsmaller/pdf-encrypt": "1.2.0",
 		"@shopify/draggable": "^1.2.1",
 		"@tauri-apps/api": "2.11.1",
 		"@tauri-apps/plugin-shell": "2.3.6",

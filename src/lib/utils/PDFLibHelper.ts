@@ -10,14 +10,20 @@ export const load = async (file: Blob) => {
 	return await PDFDocument.load(fileArrayBuffer);
 };
 
-export const save = async () => {
-	const pdfBytes = await fileSession.updatedFile.save();
+export const save = async (password?: string) => {
+	let pdfBytes = await fileSession.updatedFile.save();
+	if (password) {
+		const { encryptPDF } = await import('@pdfsmaller/pdf-encrypt');
+		pdfBytes = await encryptPDF(pdfBytes, password);
+	}
 
 	const fileBlob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
 
 	const link = document.createElement('a');
 	link.href = URL.createObjectURL(fileBlob);
-	link.download = fileSession.fileName;
+	link.download = password
+		? fileSession.fileName.replace(/\.pdf$/i, '') + '-protege.pdf'
+		: fileSession.fileName;
 
 	link.click();
 	link.remove();

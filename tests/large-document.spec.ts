@@ -42,6 +42,24 @@ test('keeps a long PDF open while repeatedly reordering pages on mobile', async 
 	const thumbnail = (number: number) =>
 		page.getByRole('button', { name: `Aller à la page ${number}`, exact: true });
 	await expect(thumbnail(2)).toBeVisible();
+	const thumbnailCenter = () =>
+		page
+			.locator('.thumbnail-item[aria-current="page"]')
+			.locator('canvas')
+			.evaluate((canvas: HTMLCanvasElement) => {
+				if (!canvas.width || !canvas.height) return 255;
+				return canvas
+					.getContext('2d')!
+					.getImageData(Math.floor(canvas.width / 2), Math.floor(canvas.height / 2), 1, 1).data[0];
+			});
+	await expect.poll(thumbnailCenter).toBeLessThan(250);
+	await page.getByRole('button', { name: 'Masquer les pages' }).click();
+	await page.locator('.document-stage').evaluate((stage) => (stage.scrollTop = 3000));
+	await expect
+		.poll(() => page.locator('.document-stage').evaluate((stage) => stage.scrollTop))
+		.toBeGreaterThan(1000);
+	await page.getByRole('button', { name: 'Afficher les pages' }).click();
+	await expect.poll(thumbnailCenter).toBeLessThan(250);
 	for (let attempt = 0; attempt < 4; attempt++) {
 		await thumbnail(1).dragTo(thumbnail(2));
 		await expect(page.getByText('Ordre des pages modifié.', { exact: false })).toBeVisible();

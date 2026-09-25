@@ -31,7 +31,7 @@ test('recognizes words with the current Tesseract output format', async ({ page 
 		buffer: Buffer.from(await pdf.save())
 	});
 	await expect(page.getByRole('main', { name: 'Aperçu du document' })).toBeVisible();
-	await page.getByRole('button', { name: 'Autres outils' }).click();
+	await page.getByRole('button', { name: 'Outils texte : OCR et extraction' }).click();
 	await page.getByLabel('Langue du document').selectOption('eng');
 	await page.getByRole('button', { name: 'Lancer l’OCR' }).click();
 	await expect(page.getByText(/Texte ajouté à 1 page|L’OCR a échoué/)).toBeVisible({
