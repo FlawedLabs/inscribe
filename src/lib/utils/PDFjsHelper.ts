@@ -1,4 +1,4 @@
-import { processedFile } from '../../stores/FileStore';
+import { fileSession } from '../../stores/FileStore.svelte';
 import { asset } from '$app/paths';
 import * as pdfjs from 'pdfjs-dist';
 
@@ -11,5 +11,5 @@ export const parse = async (file: File | Blob) => {
 };
 
 export const load = async (file: File | Blob) => {
-	processedFile.set(await parse(file));
+	fileSession.processedFile = await parse(file);
 };

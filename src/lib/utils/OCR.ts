@@ -44,9 +44,13 @@ export async function applyOcrToPdf(
 	for (let pageNumber = 1; pageNumber <= viewer.numPages; pageNumber++) {
 		onProgress({ phase: 'checking', page: pageNumber, total: viewer.numPages });
 		const page = await viewer.getPage(pageNumber);
-		const text = await page.getTextContent();
-		const hasText = text.items.some((item) => 'str' in item && item.str.trim().length > 0);
-		if (!hasText) scannedPages.push(pageNumber);
+		try {
+			const text = await page.getTextContent();
+			const hasText = text.items.some((item) => 'str' in item && item.str.trim().length > 0);
+			if (!hasText) scannedPages.push(pageNumber);
+		} finally {
+			page.cleanup();
+		}
 	}
 
 	if (!scannedPages.length) {
@@ -129,6 +133,7 @@ export async function applyOcrToPdf(
 			} finally {
 				canvas.width = 0;
 				canvas.height = 0;
+				page.cleanup();
 			}
 		}
 	} finally {

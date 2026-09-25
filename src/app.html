@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fr">
+<html lang="fr" class="scroll-smooth motion-reduce:scroll-auto">
 	<head>
 		<meta charset="utf-8" />
 		<link rel="icon" type="image/svg+xml" href="%sveltekit.assets%/favicon.svg" />
@@ -7,7 +7,10 @@
 		<title>Inscribe</title>
 		%sveltekit.head%
 	</head>
-	<body data-sveltekit-preload-data="hover">
-		<div style="display: contents">%sveltekit.body%</div>
+	<body
+		class="min-w-[320px] bg-[var(--canvas)] font-['Mulish',sans-serif] text-[var(--ink)] [&_button]:cursor-pointer [&_button:disabled]:cursor-not-allowed [&_button:disabled]:opacity-[.48] [&_*:focus-visible]:[outline:3px_solid_var(--ring)] [&_*:focus-visible]:[outline-offset:3px] motion-reduce:[&_*]:[transition-duration:0.01ms]! motion-reduce:[&_*]:[animation-duration:0.01ms]!"
+		data-sveltekit-preload-data="hover"
+	>
+		<div class="contents">%sveltekit.body%</div>
 	</body>
 </html>

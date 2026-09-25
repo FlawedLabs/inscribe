@@ -1,25 +1,29 @@
 <script lang="ts">
 	import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
-	import { processedFile } from '../../stores/FileStore';
+	import { fileSession } from '../../stores/FileStore.svelte';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import Tooltip from './Tooltip/Tooltip.svelte';
 	import TooltipContent from './Tooltip/TooltipContent.svelte';
 	import type { RecentFile } from '../../types/recentFile';
-	export let fileData: RecentFile;
+	interface Props {
+		fileData: RecentFile;
+	}
 
-	let thumbnailsCanvas: HTMLCanvasElement[] = [];
+	let { fileData }: Props = $props();
+
+	let thumbnailsCanvas: HTMLCanvasElement[] = $state([]);
 
 	const goToPdf = async (fileData: RecentFile) => {
 		const buffer = await fileData.blob.arrayBuffer();
 		const loadingTask = pdfjs.getDocument({ data: buffer });
-		$processedFile = await loadingTask.promise;
+		fileSession.processedFile = await loadingTask.promise;
 
 		await goto('/pdf');
 	};
 
 	const loadThumbnails = async () => {
-		const page = await $processedFile.getPage(1);
+		const page = await fileSession.processedFile.getPage(1);
 		const viewport = page.getViewport({ scale: 0.2 });
 		const canvas = thumbnailsCanvas[1 - 1];
 
@@ -35,7 +39,7 @@
 	onMount(async () => {
 		const buffer = await fileData.blob.arrayBuffer();
 		const loadingTask = pdfjs.getDocument({ data: buffer });
-		$processedFile = await loadingTask.promise;
+		fileSession.processedFile = await loadingTask.promise;
 
 		loadThumbnails();
 	});
@@ -45,7 +49,7 @@
 	<canvas
 		class="hover:cursor-pointer shadow-lg h-32 w-24 my-6"
 		bind:this={thumbnailsCanvas[1 - 1]}
-		on:click={() => goToPdf(fileData)}
+		onclick={() => goToPdf(fileData)}
 	>
 	</canvas>
 	<TooltipContent>
