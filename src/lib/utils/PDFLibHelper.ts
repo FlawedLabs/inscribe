@@ -14,7 +14,7 @@ export const load = async (file: Blob) => {
 export const save = async () => {
 	const pdfBytes = await get(updatedFile).save();
 
-	const fileBlob = new Blob([pdfBytes], { type: 'application/pdf' });
+	const fileBlob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
 
 	const link = document.createElement('a');
 	link.href = URL.createObjectURL(fileBlob);

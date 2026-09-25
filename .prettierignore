@@ -1,4 +1,9 @@
-# Package Managers
-package-lock.json
+.svelte-kit/
+build/
+node_modules/
+src-tauri/gen/
+src-tauri/target/
+static/ocr/
+test-results/
 pnpm-lock.yaml
-yarn.lock
+src-tauri/Cargo.lock

@@ -1,6 +1,4 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
 
 :root {
 	font-family: 'Mulish', sans-serif;
@@ -850,8 +848,11 @@ input:focus-visible {
 	font-weight: 800;
 }
 .page-context-menu {
+	z-index: 50;
 	min-width: 192px;
+	padding: 4px;
 	border: 1px solid var(--line);
+	border-radius: 8px;
 	background: var(--paper);
 	color: var(--ink);
 	box-shadow: 0 12px 32px #24342825;
@@ -860,6 +861,15 @@ input:focus-visible {
 	display: flex;
 	align-items: center;
 	gap: 10px;
+	min-height: 34px;
+	padding: 6px 9px;
+	border-radius: 5px;
+	outline: none;
+}
+.page-context-menu [role='separator'] {
+	height: 1px;
+	margin: 4px -4px;
+	background: var(--line);
 }
 .page-context-menu [role='menuitem'][data-highlighted] {
 	background: #e9eee7;

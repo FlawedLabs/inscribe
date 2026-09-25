@@ -1,4 +1,4 @@
-type RecentFile = {
+export type RecentFile = {
 	blob: Blob;
 	createdAt: Date;
 	id: number;

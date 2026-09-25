@@ -18,7 +18,7 @@
 		ScanText,
 		Trash2,
 		X
-	} from 'lucide-svelte';
+	} from '@lucide/svelte';
 	import type { PDFDocument } from 'pdf-lib';
 	import {
 		TextLayer,
@@ -27,11 +27,11 @@
 	} from 'pdfjs-dist/legacy/build/pdf.mjs';
 	import 'pdfjs-dist/web/pdf_viewer.css';
 	import { fileName, openedFile, processedFile, updatedFile } from '../../stores/FileStore';
-	import { parse as parsePDFjs } from '@/utils/PDFjsHelper';
-	import { save as savePDF } from '@/utils/PDFLibHelper';
-	import { mergePDFs, duplicatePage, removePage, reorderPage } from '@/utils/PDFEdition';
-	import { applyOcrToPdf, type OcrLanguage, type OcrProgress } from '@/utils/OCR';
-	import * as ContextMenu from '$lib/components/ui/context-menu';
+	import { parse as parsePDFjs } from '#lib/utils/PDFjsHelper.js';
+	import { save as savePDF } from '#lib/utils/PDFLibHelper.js';
+	import { mergePDFs, duplicatePage, removePage, reorderPage } from '#lib/utils/PDFEdition.js';
+	import { applyOcrToPdf, type OcrLanguage, type OcrProgress } from '#lib/utils/OCR.js';
+	import { ContextMenu } from 'bits-ui';
 
 	let pages: number[] = [];
 	let pageItems: { id: number; page: number }[] = [];
@@ -203,7 +203,7 @@
 					const thumbContext = thumbCanvas.getContext('2d');
 					if (thumbContext) {
 						const task = (activeRender = page.render({
-							canvasContext: thumbContext,
+							canvas: thumbCanvas,
 							viewport: thumbnailViewport
 						}));
 						await task.promise;
@@ -226,7 +226,7 @@
 				const context = canvas.getContext('2d');
 				if (!context) continue;
 				const task = (activeRender = page.render({
-					canvasContext: context,
+					canvas,
 					viewport,
 					transform: [pixelRatio, 0, 0, pixelRatio, 0, 0]
 				}));
@@ -260,7 +260,9 @@
 		animateMove = false
 	) => {
 		const bytes = await document.save();
-		const preview = await parsePDFjs(new Blob([bytes], { type: 'application/pdf' }));
+		const preview = await parsePDFjs(
+			new Blob([new Uint8Array(bytes)], { type: 'application/pdf' })
+		);
 		if (updatedIds) {
 			if (animateMove) {
 				refreshToken++;
@@ -436,7 +438,8 @@
 			} else {
 				status = 'Toutes les pages contiennent déjà du texte sélectionnable.';
 			}
-		} catch {
+		} catch (cause) {
+			console.error('OCR failed:', cause);
 			error =
 				'L’OCR a échoué. Vérifiez votre connexion lors du premier téléchargement du modèle de langue, puis réessayez.';
 		} finally {
@@ -695,29 +698,31 @@
 								></button
 							>{/each}
 					</ContextMenu.Trigger>
-					<ContextMenu.Content class="page-context-menu">
-						<ContextMenu.Item
-							on:click={() => contextMenuPage !== null && move(contextMenuPage, -1)}
-							disabled={busy || contextMenuPage === null || contextMenuPage === 1}
-							><ChevronUp size={16} /> Monter la page</ContextMenu.Item
-						>
-						<ContextMenu.Item
-							on:click={() => contextMenuPage !== null && move(contextMenuPage, 1)}
-							disabled={busy || contextMenuPage === null || contextMenuPage === pages.length}
-							><ChevronDown size={16} /> Descendre la page</ContextMenu.Item
-						>
-						<ContextMenu.Separator />
-						<ContextMenu.Item
-							on:click={() => contextMenuPage !== null && duplicate(contextMenuPage)}
-							disabled={busy || contextMenuPage === null}
-							><Copy size={16} /> Dupliquer la page</ContextMenu.Item
-						>
-						<ContextMenu.Item
-							on:click={() => contextMenuPage !== null && remove(contextMenuPage)}
-							disabled={busy || contextMenuPage === null || pages.length <= 1}
-							class="context-danger"><Trash2 size={16} /> Supprimer la page</ContextMenu.Item
-						>
-					</ContextMenu.Content>
+					<ContextMenu.Portal>
+						<ContextMenu.Content class="page-context-menu">
+							<ContextMenu.Item
+								onSelect={() => contextMenuPage !== null && move(contextMenuPage, -1)}
+								disabled={busy || contextMenuPage === null || contextMenuPage === 1}
+								><ChevronUp size={16} /> Monter la page</ContextMenu.Item
+							>
+							<ContextMenu.Item
+								onSelect={() => contextMenuPage !== null && move(contextMenuPage, 1)}
+								disabled={busy || contextMenuPage === null || contextMenuPage === pages.length}
+								><ChevronDown size={16} /> Descendre la page</ContextMenu.Item
+							>
+							<ContextMenu.Separator />
+							<ContextMenu.Item
+								onSelect={() => contextMenuPage !== null && duplicate(contextMenuPage)}
+								disabled={busy || contextMenuPage === null}
+								><Copy size={16} /> Dupliquer la page</ContextMenu.Item
+							>
+							<ContextMenu.Item
+								onSelect={() => contextMenuPage !== null && remove(contextMenuPage)}
+								disabled={busy || contextMenuPage === null || pages.length <= 1}
+								class="context-danger"><Trash2 size={16} /> Supprimer la page</ContextMenu.Item
+							>
+						</ContextMenu.Content>
+					</ContextMenu.Portal>
 				</ContextMenu.Root>
 				<div class="sidebar-footer" id="page-reorder-hint">
 					<FileText size={15} /><span class="desktop-hint"

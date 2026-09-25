@@ -8,13 +8,14 @@
 		FolderOpen,
 		ShieldCheck,
 		UploadCloud
-	} from 'lucide-svelte';
+	} from '@lucide/svelte';
 	import { fileName, openedFile, processedFile, updatedFile } from '../stores/FileStore';
-	import * as PDFLibHelper from '@/utils/PDFLibHelper';
-	import * as PDFjsHelper from '@/utils/PDFjsHelper';
+	import * as PDFLibHelper from '#lib/utils/PDFLibHelper.js';
+	import * as PDFjsHelper from '#lib/utils/PDFjsHelper.js';
 	import * as pdfJS from 'pdfjs-dist';
 	import pdfJSWorkerURL from 'pdfjs-dist/legacy/build/pdf.worker.mjs?url';
-	import { listRecentFiles, openRecentDatabase, saveRecentFile } from './utils/IndexDBUtils';
+	import { listRecentFiles, openRecentDatabase, saveRecentFile } from '#lib/utils/IndexDBUtils.js';
+	import type { RecentFile } from '../types/recentFile';
 
 	let input: HTMLInputElement;
 	let db: IDBDatabase | undefined;

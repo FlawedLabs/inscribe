@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { CirclePlus } from 'lucide-svelte';
+	import { CirclePlus } from '@lucide/svelte';
 </script>
 
 <div class="group min-h-6 max-h-6 w-1/2 cursor-pointer">

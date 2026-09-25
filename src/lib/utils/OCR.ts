@@ -1,4 +1,4 @@
-import { base } from '$app/paths';
+import { asset } from '$app/paths';
 import { PDFDocument, StandardFonts, degrees } from 'pdf-lib';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { createWorker } from 'tesseract.js';
@@ -16,12 +16,6 @@ export type OcrResult = {
 	pagesUpdated: number;
 	pagesSkipped: number;
 	wordsAdded: number;
-};
-
-type OcrWord = {
-	text: string;
-	confidence: number;
-	bbox: { x0: number; x1: number; y0: number; y1: number };
 };
 
 const supportedText = (text: string, font: Awaited<ReturnType<PDFDocument['embedFont']>>) =>
@@ -67,11 +61,12 @@ export async function applyOcrToPdf(
 	// Work on a copy so a failed recognition cannot leave the open document half-edited.
 	const result = await PDFDocument.load(await source.save());
 	const font = await result.embedFont(StandardFonts.Helvetica);
-	const assetRoot = `${base}/ocr`;
+	const workerPath = asset('ocr/worker.min.js');
+	const assetRoot = workerPath.slice(0, -'/worker.min.js'.length);
 	let currentPage = 0;
 	onProgress({ phase: 'loading', percent: 0 });
 	const worker = await createWorker(language, 1, {
-		workerPath: `${assetRoot}/worker.min.js`,
+		workerPath,
 		corePath: assetRoot,
 		logger: (message) => {
 			const percent = Math.floor((message.progress || 0) * 10) * 10;
@@ -107,11 +102,15 @@ export async function applyOcrToPdf(
 			const context = canvas.getContext('2d');
 			if (!context) throw new Error('Canvas is unavailable');
 			try {
-				await page.render({ canvasContext: context, viewport }).promise;
-				const recognition = await worker.recognize(canvas);
+				await page.render({ canvas, viewport }).promise;
+				const recognition = await worker.recognize(canvas, {}, { blocks: true });
 				const target = result.getPage(pageNumber - 1);
 				const wordsBeforePage = wordsAdded;
-				for (const word of (recognition.data.words ?? []) as OcrWord[]) {
+				const words =
+					recognition.data.blocks?.flatMap((block) =>
+						block.paragraphs.flatMap((paragraph) => paragraph.lines.flatMap((line) => line.words))
+					) ?? [];
+				for (const word of words) {
 					if (!word.text.trim() || word.confidence < 35) continue;
 					const text = supportedText(word.text.trim(), font);
 					if (!text) continue;

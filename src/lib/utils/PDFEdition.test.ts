@@ -38,7 +38,7 @@ describe('PDF page editing', () => {
 		const incoming = await PDFDocument.create();
 		incoming.addPage([200, 200]);
 		const merged = await PDFDocument.load(
-			await (await mergePDFs(original, new Blob([await incoming.save()]))).save()
+			await (await mergePDFs(original, new Blob([new Uint8Array(await incoming.save())]))).save()
 		);
 		expect(merged.getPageCount()).toBe(3);
 		checkOriginal(merged);

@@ -1,3 +1,5 @@
+import type { RecentFile } from '../../types/recentFile';
+
 const STORE_NAME = 'recentFiles';
 
 export const openRecentDatabase = (): Promise<IDBDatabase> =>

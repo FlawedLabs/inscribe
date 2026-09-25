@@ -5,6 +5,7 @@
 	import { onMount } from 'svelte';
 	import Tooltip from './Tooltip/Tooltip.svelte';
 	import TooltipContent from './Tooltip/TooltipContent.svelte';
+	import type { RecentFile } from '../../types/recentFile';
 	export let fileData: RecentFile;
 
 	let thumbnailsCanvas: HTMLCanvasElement[] = [];
@@ -26,10 +27,7 @@
 		canvas.height = viewport.height;
 		const ctx = canvas.getContext('2d')!;
 
-		const renderContext = {
-			canvasContext: ctx,
-			viewport: viewport
-		};
+		const renderContext = { canvas, viewport };
 
 		await page.render(renderContext).promise;
 	};
