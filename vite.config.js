@@ -2,7 +2,7 @@ import { defineConfig } from 'vite';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { internalIpV4 } from 'internal-ip';
 
-const mobile = !!/android|ios/.exec(process.env.TAURI_ENV_PLATFORM);
+const mobile = !!/android|ios/.exec(process.env.TAURI_ENV_PLATFORM ?? '');
 
 export default defineConfig(async () => ({
 	plugins: [sveltekit()],

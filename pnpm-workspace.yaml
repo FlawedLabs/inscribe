@@ -1,0 +1,6 @@
+allowBuilds:
+  '@sveltejs/kit': true
+  canvas: true
+  esbuild: true
+  svelte-preprocess: true
+  tesseract.js: true

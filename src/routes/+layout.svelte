@@ -6,8 +6,4 @@
 	import '../app.css';
 </script>
 
-<svelte:head>
-	<title>Inscribe | PDF Editor</title>
-</svelte:head>
-
 <slot />

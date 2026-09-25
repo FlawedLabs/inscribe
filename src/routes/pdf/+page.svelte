@@ -1,250 +1,376 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import { openedFile, updatedFile, processedFile, canvasList } from '../../stores/FileStore';
-	import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
-	import 'pdfjs-dist/web/pdf_viewer.css';
+	import { onMount, tick } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { Sortable, type SortableEventNames } from '@shopify/draggable';
-	import { PDFDocument, PDFPage } from 'pdf-lib';
-	import { inview } from 'svelte-inview';
-	import PageSeparator from '../../lib/components/PageSeparator.svelte';
-	import * as ContextMenu from '$lib/components/ui/context-menu/index';
-	import { Files, Trash } from 'lucide-svelte';
-	import { load } from '$lib/utils/PDFLibHelper';
-	import { load as loadPDFjsHelper } from '@/utils/PDFjsHelper';
-	import { duplicatePage } from '@/utils/PDFEdition';
-
-	const PDF_SCALE = 1.3;
-	const outputScale = window.devicePixelRatio || 1;
+	import {
+		ArrowLeft,
+		ChevronDown,
+		ChevronUp,
+		Copy,
+		Download,
+		FilePlus2,
+		FileText,
+		Menu,
+		Minus,
+		Plus,
+		ScanText,
+		Trash2,
+		X
+	} from 'lucide-svelte';
+	import { PDFDocument } from 'pdf-lib';
+	import { TextLayer, type PDFDocumentProxy } from 'pdfjs-dist/legacy/build/pdf.mjs';
+	import 'pdfjs-dist/web/pdf_viewer.css';
+	import { canvasList, fileName, processedFile, updatedFile } from '../../stores/FileStore';
+	import { load as loadPDFjs } from '@/utils/PDFjsHelper';
+	import { save as savePDF } from '@/utils/PDFLibHelper';
+	import { openAndMergePDFs, duplicatePage } from '@/utils/PDFEdition';
+	import { addOCR } from '@/utils/OCR';
 
 	let pages: number[] = [];
-
-	let thumbnailsCanvas: HTMLCanvasElement[] = [];
-	let textLayerDiv: HTMLDivElement[] = [];
-	let pageDiv: HTMLDivElement[] = [];
-
-	// By default, only render the first page
-	let isInView: boolean[];
-
-	let contextMenuPage: number;
-
+	let thumbnails: HTMLCanvasElement[] = [];
+	let pageCanvases: HTMLCanvasElement[] = [];
+	let textLayers: HTMLDivElement[] = [];
+	let pageElements: HTMLElement[] = [];
+	let mergeInput: HTMLInputElement;
 	let selectedPage = 1;
+	let scale = 1;
+	let sidebarOpen = true;
+	let toolsOpen = false;
+	let busy = false;
+	let dirty = false;
+	let status = '';
+	let error = '';
+	let mounted = false;
+	let refreshToken = 0;
 
-	let thumbnailContainer: HTMLDivElement;
-
-	let sortable: Sortable<SortableEventNames>;
-
-	onMount(async () => {
-		$updatedFile = await load($openedFile);
+	onMount(() => {
+		if (!$processedFile || !$updatedFile) {
+			void goto('/');
+			return;
+		}
+		sidebarOpen = window.innerWidth > 760;
+		const availableWidth =
+			window.innerWidth - (sidebarOpen ? 222 : 0) - (window.innerWidth <= 760 ? 32 : 100);
+		scale = Math.max(0.6, Math.min(1, Math.floor((availableWidth / 595) * 10) / 10));
+		mounted = true;
+		return () => {
+			refreshToken++;
+		};
 	});
 
-	$: {
-		init($processedFile);
+	$: if (mounted && $processedFile) void renderDocument($processedFile, scale, sidebarOpen);
+
+	async function renderDocument(document: PDFDocumentProxy, zoom: number, showSidebar: boolean) {
+		const token = ++refreshToken;
+		pages = Array.from({ length: document.numPages }, (_, index) => index + 1);
+		selectedPage = Math.min(selectedPage, pages.length);
+		await tick();
+		if (token !== refreshToken) return;
+		for (const pageNumber of pages) {
+			if (token !== refreshToken) return;
+			try {
+				const page = await document.getPage(pageNumber);
+				const thumbCanvas = thumbnails[pageNumber - 1];
+				const canvas = pageCanvases[pageNumber - 1];
+				const layer = textLayers[pageNumber - 1];
+				if (!canvas || !layer) continue;
+				if (showSidebar && thumbCanvas) {
+					const thumbnailViewport = page.getViewport({ scale: 0.2 });
+					thumbCanvas.width = Math.round(thumbnailViewport.width);
+					thumbCanvas.height = Math.round(thumbnailViewport.height);
+					const thumbContext = thumbCanvas.getContext('2d');
+					if (thumbContext)
+						await page.render({ canvasContext: thumbContext, viewport: thumbnailViewport }).promise;
+				}
+
+				const viewport = page.getViewport({ scale: zoom });
+				const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+				canvas.width = Math.round(viewport.width * pixelRatio);
+				canvas.height = Math.round(viewport.height * pixelRatio);
+				canvas.style.width = `${viewport.width}px`;
+				canvas.style.height = `${viewport.height}px`;
+				const sheet = pageElements[pageNumber - 1];
+				if (sheet) {
+					sheet.style.width = `${viewport.width}px`;
+					sheet.style.height = `${viewport.height}px`;
+					sheet.style.setProperty('--scale-factor', String(zoom));
+				}
+				const context = canvas.getContext('2d');
+				if (!context) continue;
+				await page.render({
+					canvasContext: context,
+					viewport,
+					transform: [pixelRatio, 0, 0, pixelRatio, 0, 0]
+				}).promise;
+				if (token !== refreshToken) return;
+				layer.replaceChildren();
+				layer.style.width = `${viewport.width}px`;
+				layer.style.height = `${viewport.height}px`;
+				const textContent = await page.getTextContent();
+				await new TextLayer({
+					textContentSource: textContent,
+					container: layer,
+					viewport
+				}).render();
+			} catch {
+				error = `La page ${pageNumber} n’a pas pu être affichée.`;
+			}
+		}
+		if (token === refreshToken) canvasList.set(pageCanvases);
 	}
 
-	const init = async (file: pdfjs.PDFDocumentProxy | null) => {
-		if ($processedFile) {
-			pages = Array.from({ length: $processedFile.numPages }, (_, i) => i + 1);
-			loadThumbnails();
-
-			// We create an array containing the rendered state of each page
-			isInView = [true, ...Array.from({ length: pages.length }, () => false)];
-
-			loadPage(1);
-
-			// Make the thumbnails draggable
-			sortable = new Sortable(thumbnailContainer, {
-				draggable: '.thumbnail-sub-container',
-				delay: 200,
-				mirror: {
-					appendTo: thumbnailContainer,
-					constrainDimensions: true
-				}
-			});
-
-			// When the user stops dragging a thumbnail, we update the pages array
-			sortable.on('sortable:stop', (event: { oldIndex: any; newIndex: any }) => {
-				const { oldIndex, newIndex } = event;
-
-				// Remove the page from the old index and insert it at the new index
-				const pageToMove = pages.splice(oldIndex, 1);
-				pages.splice(newIndex, 0, pageToMove[0]);
-
-				pages = [...pages];
-			});
-		} else {
-			goto('/');
-		}
-	};
-
-	const loadThumbnails = async () => {
-		for (let pageNum = 1; pageNum <= $processedFile.numPages; pageNum++) {
-			const page = await $processedFile.getPage(pageNum);
-			const viewport = page.getViewport({ scale: 0.2 });
-
-			const canvas = thumbnailsCanvas[pageNum - 1];
-			canvas.width = viewport.width;
-			canvas.height = viewport.height;
-			const ctx = canvas.getContext('2d')!;
-
-			const renderContext = {
-				canvasContext: ctx,
-				viewport: viewport
-			};
-
-			await page.render(renderContext).promise;
-		}
-	};
-
-	const removePage = async () => {
-		$updatedFile.removePage(contextMenuPage - 1);
-		await loadPdf();
-	};
-
-	const duplicate = async () => {
-		$updatedFile = await duplicatePage(contextMenuPage);
-		await loadPdf();
-	};
-
-	const loadPdf = async () => {
-		const binaryFile = await $updatedFile.save();
-		const blob = new Blob([binaryFile], { type: 'application/pdf' });
-		await loadPDFjsHelper(blob);
-	};
-
-	const loadPage = async (pageIndex: number) => {
-		// Prevent loading already loaded pages
-		if (!isInView[pageIndex]) {
-			console.log('Loading page', pageIndex);
-			isInView[pageIndex - 1] = true;
-
-			// Processed File starts at 1
-			const page = await $processedFile.getPage(pageIndex);
-			const viewport = page.getViewport({ scale: PDF_SCALE });
-
-			const canvas = $canvasList[pageIndex - 1];
-
-			canvas.width = Math.floor(viewport.width * outputScale);
-			canvas.height = Math.floor(viewport.height * outputScale);
-
-			pageDiv[pageIndex - 1].style.width = Math.floor(viewport.width) + 'px';
-			pageDiv[pageIndex - 1].style.height = Math.floor(viewport.height) + 'px';
-
-			const ctx = canvas.getContext('2d')!;
-
-			const renderContext = {
-				canvasContext: ctx,
-				viewport
-			};
-
-			await page.render(renderContext).promise;
-
-			page.getTextContent().then((textContent) => {
-				const textLayer = new pdfjs.TextLayer({
-					textContentSource: textContent,
-					container: textLayerDiv[pageIndex - 1],
-					viewport
-				});
-
-				textLayerDiv[pageIndex - 1].style.height = `${viewport.height}px`;
-				textLayerDiv[pageIndex - 1].style.width = `${viewport.width}px`;
-
-				textLayer.render();
-			});
-		}
-	};
-
-	// Reorder pages in the PDF document
-	const reorderPages = async (pdfDoc: PDFDocument, newOrder: number[]) => {
-		const originalPages = pdfDoc.getPages();
-		let reorderedPages: PDFPage[] = [];
-
-		// Create a reordered array of pages based on newOrder
-		newOrder.forEach((order) => {
-			const pageIndex = order - 1;
-			reorderedPages.push(originalPages[pageIndex]);
-		});
-
-		// Remove all pages from the document
-		for (let i = originalPages.length - 1; i >= 0; i--) {
-			pdfDoc.removePage(i);
-		}
-
-		// Add pages back in the new order
-		reorderedPages.forEach((page) => {
-			pdfDoc.addPage(page);
-		});
-	};
-
-	const onPageVisible = (pageNumber: number) => {
-		loadPage(pageNumber);
+	const goToPage = (pageNumber: number) => {
 		selectedPage = pageNumber;
+		pageElements[pageNumber - 1]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+		if (window.innerWidth <= 760) sidebarOpen = false;
+	};
+
+	const syncPdf = async () => {
+		const bytes = await $updatedFile.save();
+		await loadPDFjs(new Blob([bytes], { type: 'application/pdf' }));
+		dirty = true;
+	};
+
+	const runAction = async (action: () => Promise<void>, success: string) => {
+		if (busy) return;
+		busy = true;
+		error = '';
+		status = '';
+		try {
+			await action();
+			status = success;
+		} catch {
+			error = 'L’opération a échoué. Votre document reste ouvert.';
+		} finally {
+			busy = false;
+		}
+	};
+
+	const duplicate = (pageNumber: number) =>
+		void runAction(async () => {
+			$updatedFile = await duplicatePage(pageNumber);
+			selectedPage = pageNumber + 1;
+			await syncPdf();
+		}, 'Page dupliquée. Pensez à exporter le PDF.');
+
+	const remove = (pageNumber: number) => {
+		if (pages.length <= 1) {
+			error = 'Un PDF doit conserver au moins une page.';
+			return;
+		}
+		if (!window.confirm(`Supprimer la page ${pageNumber} ?`)) return;
+		void runAction(async () => {
+			$updatedFile.removePage(pageNumber - 1);
+			selectedPage = Math.min(pageNumber, pages.length - 1);
+			await syncPdf();
+		}, 'Page supprimée. Pensez à exporter le PDF.');
+	};
+
+	const move = (pageNumber: number, direction: -1 | 1) => {
+		const target = pageNumber - 1 + direction;
+		if (target < 0 || target >= pages.length) return;
+		void runAction(async () => {
+			const source = $updatedFile;
+			const order = source.getPageIndices();
+			[order[pageNumber - 1], order[target]] = [order[target], order[pageNumber - 1]];
+			const reordered = await PDFDocument.create();
+			for (const page of await reordered.copyPages(source, order)) reordered.addPage(page);
+			$updatedFile = reordered;
+			selectedPage = target + 1;
+			await syncPdf();
+		}, 'Ordre des pages modifié. Pensez à exporter le PDF.');
+	};
+
+	const merge = (event: Event) => {
+		const file = (event.currentTarget as HTMLInputElement).files?.[0];
+		if (!file) return;
+		void runAction(async () => {
+			$updatedFile = await openAndMergePDFs(file);
+			await syncPdf();
+		}, 'Document ajouté. Pensez à exporter le PDF.');
+		mergeInput.value = '';
+	};
+
+	const save = () =>
+		void runAction(async () => {
+			await savePDF();
+			dirty = false;
+		}, 'PDF exporté dans vos téléchargements.');
+	const ocr = () => {
+		toolsOpen = false;
+		void runAction(addOCR, 'Reconnaissance de texte terminée.');
+	};
+	const back = () => {
+		if (
+			!dirty ||
+			window.confirm('Les modifications non exportées seront perdues. Revenir à l’accueil ?')
+		)
+			void goto('/');
+	};
+	const setZoom = (change: number) => {
+		scale = Math.max(0.6, Math.min(1.6, Math.round((scale + change) * 10) / 10));
 	};
 </script>
 
-<div class="flex min-h-screen h-full bg-gray-100">
-	<div
-		class="w-48 h-full fixed overflow-y-auto border-r-2 border-gray-800 bg-stone-100 p-2 flex flex-col items-center gap-5"
-	>
-		<ContextMenu.Root>
-			<ContextMenu.Trigger>
-				<div bind:this={thumbnailContainer}>
-					{#each pages as page, i (page)}
-						<!-- svelte-ignore a11y-no-static-element-interactions -->
-						<div
-							on:contextmenu={() => (contextMenuPage = page)}
-							class={`thumbnail-sub-container px-4 pb-2 pt-3 rounded-md ${selectedPage === page ? 'bg-blue-200' : ''}`}
-						>
-							<a href="#page-{page}">
-								<canvas
-									class={`hover:cursor-pointer rounded-sm border-2 ${selectedPage === page ? 'border-blue-500' : 'border-stone-200'}`}
-									bind:this={thumbnailsCanvas[page - 1]}
-									height="168"
-									width="120"
-								></canvas>
-							</a>
-							<p
-								class={`${selectedPage === page ? 'text-blue-500' : 'text-slate-500'} font-semibold`}
-							>
-								Page {i + 1}
-							</p>
-						</div>
-					{/each}
-				</div>
-			</ContextMenu.Trigger>
+<svelte:head><title>{$fileName || 'Document'} — Inscribe</title></svelte:head>
 
-			<ContextMenu.Content class="w-64">
-				<ContextMenu.Item on:click={() => duplicate()} class="gap-2">
-					Duplicate <Files size={16} />
-				</ContextMenu.Item>
-				<ContextMenu.Item
-					on:click={() => removePage()}
-					class="text-red-500 flex gap-2 hover:text-red-600"
+<div class="editor-shell">
+	<header class="editor-header">
+		<div class="editor-identity">
+			<button
+				class="icon-button back-button"
+				type="button"
+				on:click={back}
+				aria-label="Retour à l’accueil"
+				title="Retour à l’accueil"><ArrowLeft size={19} /></button
+			>
+			<span class="brand-mark compact">i<span>.</span></span>
+			<div class="document-identity">
+				<strong title={$fileName}>{$fileName || 'Document sans titre'}</strong><small
+					>{dirty ? 'Modifications non exportées' : 'Document ouvert'}</small
 				>
-					Delete <Trash size={16} />
-					<ContextMenu.Shortcut>X</ContextMenu.Shortcut>
-				</ContextMenu.Item>
-			</ContextMenu.Content>
-		</ContextMenu.Root>
-	</div>
-
-	<div class="pdfViewer flex-1 mt-18" style={`--scale-factor: ${PDF_SCALE};`}>
-		<div class="container flex flex-col items-center w-2/3">
-			{#each pages as page (page)}
-				<div id={`page-${page}`} class="page" bind:this={pageDiv[page - 1]}>
-					<div class="canvasWrapper" use:inview on:inview_enter={() => onPageVisible(page)}>
-						{#if isInView[page - 1] === true}
-							<canvas bind:this={$canvasList[page - 1]} class="shadow-lg"></canvas>
-						{:else}
-							<div class="w-full h-full flex items-center justify-center">
-								<div class="text-gray-400">Loading...</div>
-							</div>
-						{/if}
-					</div>
-					<div bind:this={textLayerDiv[page - 1]} class="textLayer"></div>
-				</div>
-				<PageSeparator />
-			{/each}
+			</div>
 		</div>
+		<div class="editor-actions">
+			<input
+				bind:this={mergeInput}
+				type="file"
+				accept=".pdf,application/pdf"
+				class="visually-hidden"
+				on:change={merge}
+				aria-label="Choisir un PDF à ajouter"
+			/>
+			<button
+				class="toolbar-button merge-button"
+				type="button"
+				on:click={() => mergeInput.click()}
+				disabled={busy}
+				aria-label="Ajouter un PDF"><FilePlus2 size={18} /> <span>Ajouter un PDF</span></button
+			>
+			<div class="tools-wrap">
+				<button
+					class="icon-button tools-button"
+					type="button"
+					on:click={() => (toolsOpen = !toolsOpen)}
+					aria-label="Autres outils"
+					aria-expanded={toolsOpen}
+					title="Autres outils"><Menu size={20} /></button
+				>{#if toolsOpen}<div class="tools-popover">
+						<button type="button" on:click={ocr} disabled={busy}
+							><ScanText size={17} /> OCR expérimental</button
+						>
+					</div>{/if}
+			</div>
+			<button
+				class="export-button"
+				type="button"
+				on:click={save}
+				disabled={busy}
+				aria-label="Exporter le PDF"><Download size={18} /><span>Exporter le PDF</span></button
+			>
+		</div>
+	</header>
+	<div class="editor-subbar">
+		<div class="subbar-left">
+			<button
+				class="icon-button sidebar-toggle"
+				type="button"
+				on:click={() => (sidebarOpen = !sidebarOpen)}
+				aria-label={sidebarOpen ? 'Masquer les pages' : 'Afficher les pages'}
+				aria-expanded={sidebarOpen}><Menu size={18} /></button
+			><span class="subbar-label">ÉDITION DU DOCUMENT</span><span class="subbar-divider"
+			></span><span>{pages.length} {pages.length === 1 ? 'page' : 'pages'}</span>
+		</div>
+		<div class="zoom-controls">
+			<button
+				class="icon-button"
+				type="button"
+				on:click={() => setZoom(-0.1)}
+				aria-label="Réduire le zoom"
+				disabled={scale <= 0.6}><Minus size={17} /></button
+			><span aria-live="polite">{Math.round(scale * 100)} %</span><button
+				class="icon-button"
+				type="button"
+				on:click={() => setZoom(0.1)}
+				aria-label="Augmenter le zoom"
+				disabled={scale >= 1.6}><Plus size={17} /></button
+			>
+		</div>
+	</div>
+	{#if error || status}<div class:error class="editor-notice" role={error ? 'alert' : 'status'}>
+			{error || status}<button
+				type="button"
+				on:click={() => {
+					error = '';
+					status = '';
+				}}
+				aria-label="Fermer le message"><X size={16} /></button
+			>
+		</div>{/if}
+	<div class="editor-body">
+		{#if sidebarOpen}<aside class="page-sidebar" aria-label="Pages du document">
+				<div class="sidebar-heading">
+					<span>PAGES</span><span>{String(pages.length).padStart(2, '0')}</span>
+				</div>
+				<div class="thumbnail-list">
+					{#each pages as page (page)}<button
+							class:active={selectedPage === page}
+							class="thumbnail-item"
+							type="button"
+							on:click={() => goToPage(page)}
+							aria-label={`Aller à la page ${page}`}
+							aria-current={selectedPage === page ? 'page' : undefined}
+							><span class="thumbnail-paper"
+								><canvas bind:this={thumbnails[page - 1]}></canvas></span
+							><span class="thumbnail-caption"
+								><span>{String(page).padStart(2, '0')}</span><span>Page {page}</span></span
+							></button
+						>{/each}
+				</div>
+				<div class="sidebar-footer"><FileText size={15} /> Glissez le contenu pour lire</div>
+			</aside>{/if}
+		<main class="document-stage" aria-label="Aperçu du document">
+			<div class="stage-inner">
+				<div class="stage-heading">
+					<span>APERÇU DU DOCUMENT</span><span>Page {selectedPage} sur {pages.length}</span>
+				</div>
+				{#each pages as page (page)}<section class="page-section" aria-label={`Page ${page}`}>
+						<div class="pdf-sheet" bind:this={pageElements[page - 1]}>
+							<canvas bind:this={pageCanvases[page - 1]}></canvas>
+							<div bind:this={textLayers[page - 1]} class="textLayer"></div>
+						</div>
+						<div class="page-actions">
+							<span>PAGE {String(page).padStart(2, '0')}</span>
+							<div>
+								<button
+									type="button"
+									on:click={() => move(page, -1)}
+									disabled={busy || page === 1}
+									aria-label={`Déplacer la page ${page} vers le haut`}
+									title="Monter"><ChevronUp size={17} /></button
+								><button
+									type="button"
+									on:click={() => move(page, 1)}
+									disabled={busy || page === pages.length}
+									aria-label={`Déplacer la page ${page} vers le bas`}
+									title="Descendre"><ChevronDown size={17} /></button
+								><button
+									type="button"
+									on:click={() => duplicate(page)}
+									disabled={busy}
+									aria-label={`Dupliquer la page ${page}`}
+									title="Dupliquer"><Copy size={17} /></button
+								><button
+									type="button"
+									class="danger-action"
+									on:click={() => remove(page)}
+									disabled={busy || pages.length <= 1}
+									aria-label={`Supprimer la page ${page}`}
+									title="Supprimer"><Trash2 size={17} /></button
+								>
+							</div>
+						</div>
+					</section>{/each}
+			</div>
+		</main>
 	</div>
 </div>

@@ -1,57 +1,39 @@
-export const saveBlob = (db: IDBDatabase, storeName: string, blob: Blob | File, name: string) => {
-	handleRecentFiles(db);
-	const transaction = db.transaction([storeName], 'readwrite');
-	const store = transaction.objectStore(storeName);
-	// Blob to save
-	const fileRecord = {
-		blob,
-		name,
-		createdAt: new Date()
-	};
+const STORE_NAME = 'recentFiles';
 
-	const allRequest = store.getAll();
-	allRequest.onsuccess = () => {
-		const allResult = allRequest.result;
-		const length = allResult.filter(value => value.name === fileRecord.name).length
-		
-		if(length === 0) {
-			const request = store.add(fileRecord);
+export const openRecentDatabase = (): Promise<IDBDatabase> =>
+	new Promise((resolve, reject) => {
+		const request = indexedDB.open('inscribe', 1);
+		request.onupgradeneeded = () => {
+			const db = request.result;
+			if (!db.objectStoreNames.contains(STORE_NAME))
+				db.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
+		};
+		request.onsuccess = () => resolve(request.result);
+		request.onerror = () => reject(request.error);
+	});
 
-			request.onsuccess = () => {
-				console.log('File saved successfully');
-			};
-	
-			request.onerror = (event) => {
-				console.error('Error saving file:', (event.target as IDBRequest).error);
-			};
-		}
-	}
-};
+export const listRecentFiles = (db: IDBDatabase): Promise<RecentFile[]> =>
+	new Promise((resolve, reject) => {
+		const request = db.transaction(STORE_NAME).objectStore(STORE_NAME).getAll();
+		request.onsuccess = () =>
+			resolve(
+				(request.result as RecentFile[]).sort(
+					(a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)
+				)
+			);
+		request.onerror = () => reject(request.error);
+	});
 
-const handleRecentFiles = (db: IDBDatabase) => {
-	const request = db.transaction('recentFiles').objectStore('recentFiles').getAll();
-
-	request.onsuccess = () => {
-		const files = request.result;
-		if (files.length === 5) {
-			deleteOldestFile(db, files[0].id);
-		}
-	};
-
-	request.onerror = (err) => {
-		console.error(`Error to get files information: ${err}`);
-	};
-};
-
-const deleteOldestFile = (db: IDBDatabase, key: IDBValidKey) => {
-	let transaction = db.transaction(['recentFiles'], 'readwrite');
-	let request = transaction.objectStore('recentFiles').delete(key);
-
-	request.onsuccess = () => {
-		console.log(`Oldest file deleted: ${request.result}`);
-	};
-
-	request.onerror = (err) => {
-		console.error(`Error to oldest file: ${err}`);
-	};
+export const saveRecentFile = async (db: IDBDatabase, file: File): Promise<void> => {
+	const recent = await listRecentFiles(db);
+	await new Promise<void>((resolve, reject) => {
+		const transaction = db.transaction(STORE_NAME, 'readwrite');
+		const store = transaction.objectStore(STORE_NAME);
+		for (const item of recent.filter((entry) => entry.name === file.name)) store.delete(item.id);
+		store.add({ blob: file, name: file.name, createdAt: new Date() });
+		for (const item of recent.filter((entry) => entry.name !== file.name).slice(4))
+			store.delete(item.id);
+		transaction.oncomplete = () => resolve();
+		transaction.onerror = () => reject(transaction.error);
+	});
 };
