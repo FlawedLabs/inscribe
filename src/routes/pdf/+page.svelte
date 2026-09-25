@@ -41,9 +41,8 @@
 	const setPageIds = (ids: number[]) => {
 		pageItems = ids.map((id, index) => ({ id, page: index + 1 }));
 	};
-	let pageCanvases: HTMLCanvasElement[] = [];
-	let textLayers: HTMLDivElement[] = [];
-	let pageElements: HTMLElement[] = [];
+	const pageSection = (pageNumber: number) =>
+		window.document.querySelectorAll<HTMLElement>('.page-section')[pageNumber - 1];
 	let mergeInput: HTMLInputElement;
 	let toolsButton: HTMLButtonElement;
 	let infoButton: HTMLButtonElement;
@@ -193,8 +192,9 @@
 					window.document.querySelectorAll<HTMLCanvasElement>('.thumbnail-item canvas')[
 						pageNumber - 1
 					];
-				const canvas = pageCanvases[pageNumber - 1];
-				const layer = textLayers[pageNumber - 1];
+				const sheet = pageSection(pageNumber)?.querySelector<HTMLElement>('.pdf-sheet');
+				const canvas = sheet?.querySelector<HTMLCanvasElement>('canvas');
+				const layer = sheet?.querySelector<HTMLDivElement>('.textLayer');
 				if (!canvas || !layer) continue;
 				if (showSidebar && thumbCanvas) {
 					const thumbnailViewport = page.getViewport({ scale: 0.2 });
@@ -218,7 +218,6 @@
 				canvas.height = Math.round(viewport.height * pixelRatio);
 				canvas.style.width = `${viewport.width}px`;
 				canvas.style.height = `${viewport.height}px`;
-				const sheet = pageElements[pageNumber - 1];
 				if (sheet) {
 					sheet.style.width = `${viewport.width}px`;
 					sheet.style.height = `${viewport.height}px`;
@@ -251,7 +250,7 @@
 
 	const goToPage = (pageNumber: number) => {
 		selectedPage = pageNumber;
-		pageElements[pageNumber - 1]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+		pageSection(pageNumber)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 		if (window.innerWidth <= 760) sidebarOpen = false;
 	};
 
@@ -270,8 +269,17 @@
 			}
 			setPageIds(updatedIds);
 			await tick();
-			if (animateMove && moveDuration)
-				await new Promise<void>((resolve) => setTimeout(resolve, moveDuration));
+			if (animateMove && moveDuration) {
+				await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+				const animations = window.document.querySelectorAll<HTMLElement>(
+					'.thumbnail-item, .page-section'
+				);
+				await Promise.all(
+					Array.from(animations).flatMap((element) =>
+						element.getAnimations().map((animation) => animation.finished.catch(() => undefined))
+					)
+				);
+			}
 			animatingReorder = false;
 		}
 		$updatedFile = document;
@@ -722,10 +730,14 @@
 				<div class="stage-heading">
 					<span>APERÇU DU DOCUMENT</span><span>Page {selectedPage} sur {pages.length}</span>
 				</div>
-				{#each pages as page (page)}<section class="page-section" aria-label={`Page ${page}`}>
-						<div class="pdf-sheet" bind:this={pageElements[page - 1]}>
-							<canvas bind:this={pageCanvases[page - 1]}></canvas>
-							<div bind:this={textLayers[page - 1]} class="textLayer"></div>
+				{#each pageItems as { id, page } (id)}<section
+						animate:flip={{ duration: animatingReorder ? moveDuration : 0, easing: cubicOut }}
+						class="page-section"
+						aria-label={`Page ${page}`}
+					>
+						<div class="pdf-sheet">
+							<canvas></canvas>
+							<div class="textLayer"></div>
 						</div>
 						<div class="page-actions">
 							<span>PAGE {String(page).padStart(2, '0')}</span>

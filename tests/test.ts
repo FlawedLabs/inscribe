@@ -24,25 +24,71 @@ test('opens, reorders, and exports a PDF while preserving its form', async ({ pa
 	await page.getByRole('button', { name: 'Déplacer la page 1 vers le bas' }).click();
 	await expect
 		.poll(
-			() =>
-				page
-					.locator('.thumbnail-item')
-					.first()
-					.evaluate((element) => element.getAnimations().length),
+			async () => {
+				const [thumbnail, preview] = await Promise.all([
+					page
+						.locator('.thumbnail-item')
+						.first()
+						.evaluate((element) => element.getAnimations().length),
+					page
+						.locator('.page-section')
+						.first()
+						.evaluate((element) => element.getAnimations().length)
+				]);
+				return thumbnail > 0 && preview > 0;
+			},
 			{ intervals: [25, 25, 25, 25, 50] }
 		)
-		.toBeGreaterThan(0);
+		.toBe(true);
 	await expect(page.getByText('Ordre des pages modifié.')).toBeVisible();
+	await page
+		.getByRole('button', { name: 'Aller à la page 1' })
+		.dragTo(page.getByRole('button', { name: 'Aller à la page 2' }));
+	await expect(page.getByText('Ordre des pages modifié.')).toBeVisible();
+	await expect(page.getByText('L’opération a échoué.')).toHaveCount(0);
 	const downloadPromise = page.waitForEvent('download');
 	await page.getByRole('button', { name: 'Exporter le PDF' }).click();
 	const download = await downloadPromise;
 	const exported = await PDFDocument.load(
 		await (await import('node:fs/promises')).readFile(await download.path())
 	);
-	expect(exported.getPage(0).getWidth()).toBe(400);
-	expect(exported.getPage(1).getWidth()).toBe(300);
+	expect(exported.getPage(0).getWidth()).toBe(300);
+	expect(exported.getPage(1).getWidth()).toBe(400);
 	expect(exported.getTitle()).toBe('Client');
 	expect(exported.getForm().getTextField('client.name').getText()).toBe('Alice');
+});
+
+test('reorders thumbnails after moving a page in the main preview', async ({ page }) => {
+	await page.setViewportSize({ width: 1280, height: 1400 });
+	const document = await PDFDocument.create();
+	for (const width of [300, 400, 500]) document.addPage([width, 600]);
+	await page.goto('/');
+	await page.getByLabel('Sélectionner un fichier PDF').setInputFiles({
+		name: 'three-pages.pdf',
+		mimeType: 'application/pdf',
+		buffer: Buffer.from(await document.save())
+	});
+	await expect(page.getByRole('main', { name: 'Aperçu du document' })).toBeVisible();
+	await page.getByRole('button', { name: 'Déplacer la page 1 vers le bas' }).click();
+	await expect(page.getByText('Ordre des pages modifié.')).toBeVisible();
+	const firstDownloadPromise = page.waitForEvent('download');
+	await page.getByRole('button', { name: 'Exporter le PDF' }).click();
+	const firstDownload = await firstDownloadPromise;
+	const firstExport = await PDFDocument.load(
+		await (await import('node:fs/promises')).readFile(await firstDownload.path())
+	);
+	expect(firstExport.getPages().map((item) => item.getWidth())).toEqual([400, 300, 500]);
+	await page
+		.getByRole('button', { name: 'Aller à la page 1' })
+		.dragTo(page.getByRole('button', { name: 'Aller à la page 3' }));
+	await expect(page.getByText('L’opération a échoué.')).toHaveCount(0);
+	const downloadPromise = page.waitForEvent('download');
+	await page.getByRole('button', { name: 'Exporter le PDF' }).click();
+	const download = await downloadPromise;
+	const exported = await PDFDocument.load(
+		await (await import('node:fs/promises')).readFile(await download.path())
+	);
+	expect(exported.getPages().map((item) => item.getWidth())).toEqual([300, 500, 400]);
 });
 
 test('keeps different recent PDFs with the same filename', async ({ page }) => {
