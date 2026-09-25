@@ -22,6 +22,16 @@ test('opens, reorders, and exports a PDF while preserving its form', async ({ pa
 	});
 	await expect(page.getByRole('main', { name: 'Aperçu du document' })).toBeVisible();
 	await page.getByRole('button', { name: 'Déplacer la page 1 vers le bas' }).click();
+	await expect
+		.poll(
+			() =>
+				page
+					.locator('.thumbnail-item')
+					.first()
+					.evaluate((element) => element.getAnimations().length),
+			{ intervals: [25, 25, 25, 25, 50] }
+		)
+		.toBeGreaterThan(0);
 	await expect(page.getByText('Ordre des pages modifié.')).toBeVisible();
 	const downloadPromise = page.waitForEvent('download');
 	await page.getByRole('button', { name: 'Exporter le PDF' }).click();

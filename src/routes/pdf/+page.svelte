@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
+	import { flip } from 'svelte/animate';
+	import { cubicOut } from 'svelte/easing';
 	import { goto } from '$app/navigation';
 	import {
 		ArrowLeft,
@@ -32,7 +34,13 @@
 	import * as ContextMenu from '$lib/components/ui/context-menu';
 
 	let pages: number[] = [];
-	let thumbnails: HTMLCanvasElement[] = [];
+	let pageItems: { id: number; page: number }[] = [];
+	let nextPageId = 0;
+	let moveDuration = 300;
+	let animatingReorder = false;
+	const setPageIds = (ids: number[]) => {
+		pageItems = ids.map((id, index) => ({ id, page: index + 1 }));
+	};
 	let pageCanvases: HTMLCanvasElement[] = [];
 	let textLayers: HTMLDivElement[] = [];
 	let pageElements: HTMLElement[] = [];
@@ -83,6 +91,7 @@
 		const availableWidth =
 			window.innerWidth - (sidebarOpen ? 222 : 0) - (window.innerWidth <= 760 ? 32 : 100);
 		scale = Math.max(0.6, Math.min(1, Math.floor((availableWidth / 595) * 10) / 10));
+		moveDuration = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 300;
 		mounted = true;
 		return () => {
 			refreshToken++;
@@ -171,6 +180,7 @@
 		activeRender?.cancel();
 		activeRender = undefined;
 		pages = Array.from({ length: document.numPages }, (_, index) => index + 1);
+		if (pageItems.length !== document.numPages) setPageIds(pages.map(() => ++nextPageId));
 		selectedPage = Math.min(selectedPage, pages.length);
 		await tick();
 		if (token !== refreshToken) return;
@@ -179,7 +189,10 @@
 			try {
 				const page = await document.getPage(pageNumber);
 				if (token !== refreshToken) return;
-				const thumbCanvas = thumbnails[pageNumber - 1];
+				const thumbCanvas =
+					window.document.querySelectorAll<HTMLCanvasElement>('.thumbnail-item canvas')[
+						pageNumber - 1
+					];
 				const canvas = pageCanvases[pageNumber - 1];
 				const layer = textLayers[pageNumber - 1];
 				if (!canvas || !layer) continue;
@@ -242,9 +255,25 @@
 		if (window.innerWidth <= 760) sidebarOpen = false;
 	};
 
-	const applyDocument = async (document: PDFDocument) => {
+	const applyDocument = async (
+		document: PDFDocument,
+		updatedIds?: number[],
+		animateMove = false
+	) => {
 		const bytes = await document.save();
 		const preview = await parsePDFjs(new Blob([bytes], { type: 'application/pdf' }));
+		if (updatedIds) {
+			if (animateMove) {
+				refreshToken++;
+				activeRender?.cancel();
+				animatingReorder = true;
+			}
+			setPageIds(updatedIds);
+			await tick();
+			if (animateMove && moveDuration)
+				await new Promise<void>((resolve) => setTimeout(resolve, moveDuration));
+			animatingReorder = false;
+		}
 		$updatedFile = document;
 		$processedFile = preview;
 		dirty = true;
@@ -268,7 +297,9 @@
 	const duplicate = (pageNumber: number) =>
 		void runAction(async () => {
 			const next = await duplicatePage($updatedFile, pageNumber);
-			await applyDocument(next);
+			const ids = pageItems.map(({ id }) => id);
+			ids.splice(pageNumber, 0, ++nextPageId);
+			await applyDocument(next, ids);
 			selectedPage = pageNumber + 1;
 		}, 'Page dupliquée. Pensez à exporter le PDF.');
 
@@ -290,7 +321,9 @@
 		if (pageNumber === null) return;
 		void runAction(async () => {
 			const next = await removePage($updatedFile, pageNumber);
-			await applyDocument(next);
+			const ids = pageItems.map(({ id }) => id);
+			ids.splice(pageNumber - 1, 1);
+			await applyDocument(next, ids);
 			selectedPage = Math.min(pageNumber, next.getPageCount());
 		}, 'Page supprimée. Pensez à exporter le PDF.');
 	};
@@ -307,7 +340,10 @@
 			return;
 		void runAction(async () => {
 			const next = await reorderPage($updatedFile, fromPage, toPage);
-			await applyDocument(next);
+			const ids = pageItems.map(({ id }) => id);
+			const [moved] = ids.splice(fromPage - 1, 1);
+			ids.splice(toPage - 1, 0, moved);
+			await applyDocument(next, ids, true);
 			selectedPage = toPage;
 		}, 'Ordre des pages modifié. Pensez à exporter le PDF.');
 	};
@@ -349,7 +385,9 @@
 		if (!file) return;
 		void runAction(async () => {
 			const next = await mergePDFs($updatedFile, file);
-			await applyDocument(next);
+			const ids = pageItems.map(({ id }) => id);
+			while (ids.length < next.getPageCount()) ids.push(++nextPageId);
+			await applyDocument(next, ids);
 		}, 'Document ajouté. Pensez à exporter le PDF.');
 		mergeInput.value = '';
 	};
@@ -621,7 +659,8 @@
 				</div>
 				<ContextMenu.Root>
 					<ContextMenu.Trigger class="thumbnail-list">
-						{#each pages as page (page)}<button
+						{#each pageItems as { id, page } (id)}<button
+								animate:flip={{ duration: animatingReorder ? moveDuration : 0, easing: cubicOut }}
 								class:active={selectedPage === page}
 								class:dragging={draggedPage === page}
 								class:drop-before={dropTargetPage === page &&
@@ -642,9 +681,8 @@
 								aria-label={`Aller à la page ${page}`}
 								aria-describedby="page-reorder-hint"
 								aria-current={selectedPage === page ? 'page' : undefined}
-								><span class="thumbnail-paper"
-									><canvas bind:this={thumbnails[page - 1]}></canvas></span
-								><span class="thumbnail-caption"
+								><span class="thumbnail-paper"><canvas></canvas></span><span
+									class="thumbnail-caption"
 									><span>{String(page).padStart(2, '0')}</span><span>Page {page}</span></span
 								></button
 							>{/each}
