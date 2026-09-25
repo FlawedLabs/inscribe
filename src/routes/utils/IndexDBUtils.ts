@@ -29,10 +29,18 @@ export const saveRecentFile = async (db: IDBDatabase, file: File): Promise<void>
 	await new Promise<void>((resolve, reject) => {
 		const transaction = db.transaction(STORE_NAME, 'readwrite');
 		const store = transaction.objectStore(STORE_NAME);
-		for (const item of recent.filter((entry) => entry.name === file.name)) store.delete(item.id);
-		store.add({ blob: file, name: file.name, createdAt: new Date() });
-		for (const item of recent.filter((entry) => entry.name !== file.name).slice(4))
-			store.delete(item.id);
+		const matches = (entry: RecentFile) =>
+			entry.name === file.name &&
+			entry.blob.size === file.size &&
+			(entry.lastModified ?? (entry.blob as File).lastModified) === file.lastModified;
+		for (const item of recent.filter(matches)) store.delete(item.id);
+		store.add({
+			blob: file,
+			name: file.name,
+			lastModified: file.lastModified,
+			createdAt: new Date()
+		});
+		for (const item of recent.filter((entry) => !matches(entry)).slice(4)) store.delete(item.id);
 		transaction.oncomplete = () => resolve();
 		transaction.onerror = () => reject(transaction.error);
 	});

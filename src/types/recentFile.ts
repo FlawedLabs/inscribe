@@ -1,6 +1,7 @@
 type RecentFile = {
-    blob: Blob,
-    createdAt: Date
-    id: number
-    name: string
-}
+	blob: Blob;
+	createdAt: Date;
+	id: number;
+	name: string;
+	lastModified?: number;
+};

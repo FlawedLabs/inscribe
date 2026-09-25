@@ -1,38 +1,40 @@
 import { PDFDocument } from 'pdf-lib';
-import { load } from './PDFLibHelper';
-import { openedFile, updatedFile } from '../../stores/FileStore';
-import { get } from 'svelte/store';
 
-/**
- * Take the current file, and merge it with the file passed as parameter
- */
-export const openAndMergePDFs = async (file: Blob): Promise<PDFDocument> => {
-	const currentFile = get(updatedFile);
-	const fileToMerge = await load(file);
+const clone = async (source: PDFDocument) => PDFDocument.load(await source.save());
 
-	const mergedPDF = await PDFDocument.create();
-
-	(await mergedPDF.copyPages(currentFile, currentFile.getPageIndices())).forEach((page) => {
-		mergedPDF.addPage(page);
-	});
-
-	(await mergedPDF.copyPages(fileToMerge, fileToMerge.getPageIndices())).forEach((page) => {
-		mergedPDF.addPage(page);
-	});
-
-	return mergedPDF;
+export const mergePDFs = async (source: PDFDocument, file: Blob): Promise<PDFDocument> => {
+	const result = await clone(source);
+	const incoming = await PDFDocument.load(await file.arrayBuffer());
+	for (const page of await result.copyPages(incoming, incoming.getPageIndices()))
+		result.addPage(page);
+	return result;
 };
 
-export const duplicatePage = async (contextMenuPage: number) => {
-	const newPdf = await PDFDocument.create();
-	const currentFile = get(updatedFile);
+export const duplicatePage = async (
+	source: PDFDocument,
+	pageNumber: number
+): Promise<PDFDocument> => {
+	const result = await clone(source);
+	const [page] = await result.copyPages(result, [pageNumber - 1]);
+	result.insertPage(pageNumber, page);
+	return result;
+};
 
-	(await newPdf.copyPages(currentFile, currentFile.getPageIndices())).forEach((page) => {
-		newPdf.addPage(page);
-	});
-	
-	const [duplicatedPage] = await newPdf.copyPages(currentFile, [contextMenuPage - 1]);
-	newPdf.insertPage(contextMenuPage, duplicatedPage);
+export const removePage = async (source: PDFDocument, pageNumber: number): Promise<PDFDocument> => {
+	if (source.getPageCount() <= 1) throw new Error('A PDF must contain at least one page.');
+	const result = await clone(source);
+	result.removePage(pageNumber - 1);
+	return result;
+};
 
-	return newPdf
-}
+export const reorderPage = async (
+	source: PDFDocument,
+	fromPage: number,
+	toPage: number
+): Promise<PDFDocument> => {
+	const result = await clone(source);
+	const page = result.getPage(fromPage - 1);
+	result.removePage(fromPage - 1);
+	result.insertPage(toPage - 1, page);
+	return result;
+};

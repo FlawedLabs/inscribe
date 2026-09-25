@@ -9,7 +9,7 @@
 		ShieldCheck,
 		UploadCloud
 	} from 'lucide-svelte';
-	import { fileName, openedFile, updatedFile } from '../stores/FileStore';
+	import { fileName, openedFile, processedFile, updatedFile } from '../stores/FileStore';
 	import * as PDFLibHelper from '@/utils/PDFLibHelper';
 	import * as PDFjsHelper from '@/utils/PDFjsHelper';
 	import * as pdfJS from 'pdfjs-dist';
@@ -18,6 +18,7 @@
 
 	let input: HTMLInputElement;
 	let db: IDBDatabase | undefined;
+	let dbPromise: Promise<IDBDatabase> | undefined;
 	let recentFiles: RecentFile[] = [];
 	let isLoading = false;
 	let isDragging = false;
@@ -27,7 +28,8 @@
 
 	onMount(() => {
 		let active = true;
-		void openRecentDatabase()
+		dbPromise = openRecentDatabase();
+		void dbPromise
 			.then(async (database) => {
 				if (!active) {
 					database.close();
@@ -56,13 +58,16 @@
 		isLoading = true;
 		error = '';
 		try {
+			const document = await PDFLibHelper.load(file);
+			const preview = await PDFjsHelper.parse(file);
 			$fileName = file.name;
 			$openedFile = file;
-			$updatedFile = await PDFLibHelper.load(file);
-			await PDFjsHelper.load(file);
-			if (db && remember) {
+			$updatedFile = document;
+			$processedFile = preview;
+			if (remember) {
 				try {
-					await saveRecentFile(db, file);
+					const database = db ?? (await dbPromise);
+					if (database) await saveRecentFile(database, file);
 				} catch {
 					/* Editing remains available when history cannot be saved. */
 				}
@@ -88,7 +93,13 @@
 		if (file) void openPdf(file);
 	};
 	const openRecent = (record: RecentFile) => {
-		void openPdf(new File([record.blob], record.name, { type: 'application/pdf' }), false);
+		void openPdf(
+			new File([record.blob], record.name, {
+				type: 'application/pdf',
+				lastModified: record.lastModified ?? Date.now()
+			}),
+			false
+		);
 	};
 	const formatDate = (date: Date) =>
 		new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' }).format(

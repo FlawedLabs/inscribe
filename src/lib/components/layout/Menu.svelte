@@ -1,9 +1,9 @@
 <script lang="ts">
 	import * as Menubar from '$lib/components/ui/menubar';
-	import { openAndMergePDFs } from '$lib/utils/PDFEdition';
-	import { load } from '@/utils/PDFjsHelper';
+	import { mergePDFs } from '$lib/utils/PDFEdition';
+	import { parse } from '@/utils/PDFjsHelper';
 	import { save } from '@/utils/PDFLibHelper';
-	import { openedFile, updatedFile } from '../../../stores/FileStore';
+	import { processedFile, updatedFile } from '../../../stores/FileStore';
 
 	const mergePDF = () => {
 		const input = document.createElement('input');
@@ -14,12 +14,12 @@
 			const target = e.target as HTMLInputElement;
 			const file = target.files ? target.files[0] : null;
 			if (file) {
-				$updatedFile = await openAndMergePDFs(file);
-
-				const binaryFile = await $updatedFile.save();
+				const merged = await mergePDFs($updatedFile, file);
+				const binaryFile = await merged.save();
 				const blob = new Blob([binaryFile], { type: 'application/pdf' });
-
-				await load(blob);
+				const preview = await parse(blob);
+				$updatedFile = merged;
+				$processedFile = preview;
 			}
 			input.remove();
 		};

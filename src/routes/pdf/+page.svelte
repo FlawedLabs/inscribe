@@ -16,13 +16,17 @@
 		Trash2,
 		X
 	} from 'lucide-svelte';
-	import { PDFDocument } from 'pdf-lib';
-	import { TextLayer, type PDFDocumentProxy } from 'pdfjs-dist/legacy/build/pdf.mjs';
+	import type { PDFDocument } from 'pdf-lib';
+	import {
+		TextLayer,
+		type PDFDocumentProxy,
+		type RenderTask
+	} from 'pdfjs-dist/legacy/build/pdf.mjs';
 	import 'pdfjs-dist/web/pdf_viewer.css';
 	import { fileName, processedFile, updatedFile } from '../../stores/FileStore';
-	import { load as loadPDFjs } from '@/utils/PDFjsHelper';
+	import { parse as parsePDFjs } from '@/utils/PDFjsHelper';
 	import { save as savePDF } from '@/utils/PDFLibHelper';
-	import { openAndMergePDFs, duplicatePage } from '@/utils/PDFEdition';
+	import { mergePDFs, duplicatePage, removePage, reorderPage } from '@/utils/PDFEdition';
 	import { applyOcrToPdf, type OcrLanguage, type OcrProgress } from '@/utils/OCR';
 
 	let pages: number[] = [];
@@ -46,6 +50,7 @@
 	let error = '';
 	let mounted = false;
 	let refreshToken = 0;
+	let activeRender: RenderTask | undefined;
 
 	onMount(() => {
 		if (!$processedFile || !$updatedFile) {
@@ -59,6 +64,7 @@
 		mounted = true;
 		return () => {
 			refreshToken++;
+			activeRender?.cancel();
 		};
 	});
 
@@ -66,6 +72,8 @@
 
 	async function renderDocument(document: PDFDocumentProxy, zoom: number, showSidebar: boolean) {
 		const token = ++refreshToken;
+		activeRender?.cancel();
+		activeRender = undefined;
 		pages = Array.from({ length: document.numPages }, (_, index) => index + 1);
 		selectedPage = Math.min(selectedPage, pages.length);
 		await tick();
@@ -74,6 +82,7 @@
 			if (token !== refreshToken) return;
 			try {
 				const page = await document.getPage(pageNumber);
+				if (token !== refreshToken) return;
 				const thumbCanvas = thumbnails[pageNumber - 1];
 				const canvas = pageCanvases[pageNumber - 1];
 				const layer = textLayers[pageNumber - 1];
@@ -83,8 +92,15 @@
 					thumbCanvas.width = Math.round(thumbnailViewport.width);
 					thumbCanvas.height = Math.round(thumbnailViewport.height);
 					const thumbContext = thumbCanvas.getContext('2d');
-					if (thumbContext)
-						await page.render({ canvasContext: thumbContext, viewport: thumbnailViewport }).promise;
+					if (thumbContext) {
+						const task = (activeRender = page.render({
+							canvasContext: thumbContext,
+							viewport: thumbnailViewport
+						}));
+						await task.promise;
+						if (activeRender === task) activeRender = undefined;
+						if (token !== refreshToken) return;
+					}
 				}
 
 				const viewport = page.getViewport({ scale: zoom });
@@ -101,11 +117,13 @@
 				}
 				const context = canvas.getContext('2d');
 				if (!context) continue;
-				await page.render({
+				const task = (activeRender = page.render({
 					canvasContext: context,
 					viewport,
 					transform: [pixelRatio, 0, 0, pixelRatio, 0, 0]
-				}).promise;
+				}));
+				await task.promise;
+				if (activeRender === task) activeRender = undefined;
 				if (token !== refreshToken) return;
 				layer.replaceChildren();
 				layer.style.width = `${viewport.width}px`;
@@ -117,7 +135,7 @@
 					viewport
 				}).render();
 			} catch {
-				error = `La page ${pageNumber} n’a pas pu être affichée.`;
+				if (token === refreshToken) error = `La page ${pageNumber} n’a pas pu être affichée.`;
 			}
 		}
 	}
@@ -128,9 +146,11 @@
 		if (window.innerWidth <= 760) sidebarOpen = false;
 	};
 
-	const syncPdf = async () => {
-		const bytes = await $updatedFile.save();
-		await loadPDFjs(new Blob([bytes], { type: 'application/pdf' }));
+	const applyDocument = async (document: PDFDocument) => {
+		const bytes = await document.save();
+		const preview = await parsePDFjs(new Blob([bytes], { type: 'application/pdf' }));
+		$updatedFile = document;
+		$processedFile = preview;
 		dirty = true;
 	};
 
@@ -151,9 +171,9 @@
 
 	const duplicate = (pageNumber: number) =>
 		void runAction(async () => {
-			$updatedFile = await duplicatePage(pageNumber);
+			const next = await duplicatePage($updatedFile, pageNumber);
+			await applyDocument(next);
 			selectedPage = pageNumber + 1;
-			await syncPdf();
 		}, 'Page dupliquée. Pensez à exporter le PDF.');
 
 	const remove = (pageNumber: number) => {
@@ -163,9 +183,9 @@
 		}
 		if (!window.confirm(`Supprimer la page ${pageNumber} ?`)) return;
 		void runAction(async () => {
-			$updatedFile.removePage(pageNumber - 1);
+			const next = await removePage($updatedFile, pageNumber);
+			await applyDocument(next);
 			selectedPage = Math.min(pageNumber, pages.length - 1);
-			await syncPdf();
 		}, 'Page supprimée. Pensez à exporter le PDF.');
 	};
 
@@ -180,15 +200,9 @@
 		)
 			return;
 		void runAction(async () => {
-			const source = $updatedFile;
-			const order = source.getPageIndices();
-			const [movedPage] = order.splice(fromPage - 1, 1);
-			order.splice(toPage - 1, 0, movedPage);
-			const reordered = await PDFDocument.create();
-			for (const page of await reordered.copyPages(source, order)) reordered.addPage(page);
-			$updatedFile = reordered;
+			const next = await reorderPage($updatedFile, fromPage, toPage);
+			await applyDocument(next);
 			selectedPage = toPage;
-			await syncPdf();
 		}, 'Ordre des pages modifié. Pensez à exporter le PDF.');
 	};
 	const move = (pageNumber: number, direction: -1 | 1) =>
@@ -228,8 +242,8 @@
 		const file = (event.currentTarget as HTMLInputElement).files?.[0];
 		if (!file) return;
 		void runAction(async () => {
-			$updatedFile = await openAndMergePDFs(file);
-			await syncPdf();
+			const next = await mergePDFs($updatedFile, file);
+			await applyDocument(next);
 		}, 'Document ajouté. Pensez à exporter le PDF.');
 		mergeInput.value = '';
 	};
@@ -263,8 +277,7 @@
 				ocrProgress = describeOcrProgress(progress);
 			});
 			if (result.wordsAdded) {
-				$updatedFile = result.document;
-				await syncPdf();
+				await applyDocument(result.document);
 				status = `Texte ajouté à ${result.pagesUpdated} ${result.pagesUpdated === 1 ? 'page' : 'pages'}. Exportez le PDF pour le conserver.`;
 			} else if (result.pagesProcessed) {
 				status = 'Aucun texte reconnu sur les pages sans texte.';
@@ -280,6 +293,7 @@
 		}
 	};
 	const back = () => {
+		if (busy) return;
 		if (
 			!dirty ||
 			window.confirm('Les modifications non exportées seront perdues. Revenir à l’accueil ?')
@@ -309,6 +323,7 @@
 				class="icon-button back-button"
 				type="button"
 				on:click={back}
+				disabled={busy}
 				aria-label="Retour à l’accueil"
 				title="Retour à l’accueil"><ArrowLeft size={19} /></button
 			>

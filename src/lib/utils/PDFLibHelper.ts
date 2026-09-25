@@ -1,5 +1,5 @@
 import { PDFDocument } from 'pdf-lib';
-import { openedFile, fileName, updatedFile } from '../../stores/FileStore';
+import { fileName, updatedFile } from '../../stores/FileStore';
 import { get } from 'svelte/store';
 
 /**
