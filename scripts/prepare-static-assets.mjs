@@ -14,3 +14,9 @@ for (const file of readdirSync(destination).filter((name) => coreFile.test(name)
 	rmSync(join(destination, file));
 for (const file of readdirSync(coreSource).filter((name) => coreFile.test(name)))
 	copyFileSync(join(coreSource, file), join(destination, file));
+
+const pdfjsSource = join(root, 'node_modules', 'pdfjs-dist', 'wasm');
+const pdfjsDestination = join(root, 'static', 'pdfjs', 'wasm');
+mkdirSync(pdfjsDestination, { recursive: true });
+for (const file of readdirSync(pdfjsSource))
+	copyFileSync(join(pdfjsSource, file), join(pdfjsDestination, file));

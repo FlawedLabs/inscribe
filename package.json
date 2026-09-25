@@ -12,8 +12,8 @@
 	},
 	"scripts": {
 		"prepare": "svelte-kit sync",
-		"dev": "node scripts/prepare-ocr-assets.mjs && vite dev",
-		"build": "node scripts/prepare-ocr-assets.mjs && vite build",
+		"dev": "node scripts/prepare-static-assets.mjs && vite dev",
+		"build": "node scripts/prepare-static-assets.mjs && vite build",
 		"preview": "vite preview",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",

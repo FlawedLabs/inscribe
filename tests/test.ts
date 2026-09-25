@@ -1,9 +1,52 @@
 import { expect, test } from '@playwright/test';
-import { PDFDocument } from 'pdf-lib';
+import { PDFDocument, rgb } from 'pdf-lib';
 
 test('home page has expected h1', async ({ page }) => {
 	await page.goto('/');
 	await expect(page.locator('h1')).toBeVisible();
+});
+
+test('renders imported PDF content in the page canvas', async ({ page }) => {
+	const document = await PDFDocument.create();
+	const sheet = document.addPage([300, 400]);
+	sheet.drawRectangle({ x: 40, y: 280, width: 180, height: 80, color: rgb(0, 0, 0) });
+	sheet.drawText('VISIBLE TEXT', { x: 40, y: 200, size: 24 });
+	await page.goto('/');
+	await page.getByLabel('Sélectionner un fichier PDF').setInputFiles({
+		name: 'visible.pdf',
+		mimeType: 'application/pdf',
+		buffer: Buffer.from(await document.save())
+	});
+	await expect(page.getByRole('main', { name: 'Aperçu du document' })).toBeVisible();
+	expect((await page.request.get('/pdfjs/wasm/jbig2.wasm')).ok()).toBe(true);
+	await expect
+		.poll(async () =>
+			page
+				.locator('.pdf-sheet canvas')
+				.first()
+				.evaluate((canvas: HTMLCanvasElement) => {
+					const { data } = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height);
+					for (let offset = 0; offset < data.length; offset += 4) {
+						if (
+							data[offset] < 100 &&
+							data[offset + 1] < 100 &&
+							data[offset + 2] < 100 &&
+							data[offset + 3] > 0
+						)
+							return true;
+					}
+					return false;
+				})
+		)
+		.toBe(true);
+	await expect
+		.poll(async () =>
+			page
+				.locator('.textLayer span')
+				.first()
+				.evaluate((span) => parseFloat(getComputedStyle(span).fontSize))
+		)
+		.toBeGreaterThan(20);
 });
 
 test('opens, reorders, and exports a PDF while preserving its form', async ({ page }) => {
@@ -183,6 +226,12 @@ test('shows metadata from the imported PDF after editing pages', async ({ page }
 	await page.getByRole('button', { name: 'Informations sur le PDF' }).click();
 	const dialog = page.getByRole('dialog', { name: 'Informations sur le PDF' });
 	await expect(dialog).toBeVisible();
+	const dialogBox = await dialog.boundingBox();
+	const viewport = page.viewportSize();
+	expect(dialogBox).not.toBeNull();
+	expect(viewport).not.toBeNull();
+	expect(Math.abs(dialogBox!.x + dialogBox!.width / 2 - viewport!.width / 2)).toBeLessThan(2);
+	expect(Math.abs(dialogBox!.y + dialogBox!.height / 2 - viewport!.height / 2)).toBeLessThan(2);
 	await expect(dialog.getByText('contrat.pdf')).toBeVisible();
 	await expect(dialog.getByText('2 pages')).toBeVisible();
 	await expect(dialog.getByText('Contrat client')).toBeVisible();

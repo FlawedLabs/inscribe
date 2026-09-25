@@ -222,6 +222,7 @@
 					sheet.style.width = `${viewport.width}px`;
 					sheet.style.height = `${viewport.height}px`;
 					sheet.style.setProperty('--scale-factor', String(zoom));
+					sheet.style.setProperty('--total-scale-factor', String(zoom * page.userUnit));
 				}
 				const context = canvas.getContext('2d');
 				if (!context) continue;

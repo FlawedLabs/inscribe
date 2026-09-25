@@ -1,7 +1,8 @@
 import { asset } from '$app/paths';
-import { PDFDocument, StandardFonts, degrees } from 'pdf-lib';
+import { PDFDocument, StandardFonts } from 'pdf-lib';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { createWorker } from 'tesseract.js';
+import { OcrTextLayer } from './OcrTextLayer';
 
 export type OcrLanguage = 'eng' | 'fra' | 'eng+fra';
 export type OcrProgress =
@@ -105,6 +106,7 @@ export async function applyOcrToPdf(
 				await page.render({ canvas, viewport }).promise;
 				const recognition = await worker.recognize(canvas, {}, { blocks: true });
 				const target = result.getPage(pageNumber - 1);
+				const textLayer = new OcrTextLayer(target, font);
 				const wordsBeforePage = wordsAdded;
 				const words =
 					recognition.data.blocks?.flatMap((block) =>
@@ -119,20 +121,8 @@ export async function applyOcrToPdf(
 					const [x, y] = viewport.convertToPdfPoint(x0, y1);
 					const [endX, endY] = viewport.convertToPdfPoint(x1, y1);
 					const [topX, topY] = viewport.convertToPdfPoint(x0, y0);
-					const width = Math.hypot(endX - x, endY - y);
 					const height = Math.hypot(topX - x, topY - y);
-					const size = Math.max(
-						1,
-						Math.min(height * 0.88, width / Math.max(font.widthOfTextAtSize(text, 1), 0.1))
-					);
-					target.drawText(text, {
-						x,
-						y,
-						size,
-						font,
-						rotate: degrees((Math.atan2(endY - y, endX - x) * 180) / Math.PI),
-						opacity: 0
-					});
+					textLayer.addWord(text, { x, y, endX, endY, height });
 					wordsAdded++;
 				}
 				if (wordsAdded > wordsBeforePage) pagesUpdated++;
