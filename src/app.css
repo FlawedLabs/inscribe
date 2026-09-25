@@ -481,27 +481,63 @@ input:focus-visible {
 	right: 0;
 	top: 44px;
 	z-index: 20;
-	min-width: 205px;
-	padding: 5px;
+	width: min(300px, calc(100vw - 24px));
+	padding: 18px;
 	background: var(--paper);
 	border: 1px solid var(--line);
 	border-radius: 8px;
 	box-shadow: 0 12px 30px #24342822;
 }
-.tools-popover button {
-	width: 100%;
+.tools-popover strong {
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	padding: 10px;
-	background: transparent;
-	border: 0;
-	border-radius: 5px;
-	text-align: left;
+	font-size: 13px;
+}
+.tools-popover p {
+	margin: 10px 0 16px;
+	color: var(--muted-ink);
+	font-size: 12px;
+	line-height: 1.55;
+}
+.tools-popover label {
+	display: block;
+	margin-bottom: 7px;
+	font-size: 11px;
+	font-weight: 800;
+}
+.tools-popover select {
+	width: 100%;
+	min-height: 38px;
+	padding: 0 9px;
+	border: 1px solid var(--line);
+	border-radius: 6px;
+	background: white;
+	color: var(--ink);
 	font-size: 12px;
 }
-.tools-popover button:hover {
-	background: #eef1eb;
+.tools-popover small {
+	display: block;
+	margin-top: 11px;
+	color: var(--muted-ink);
+	font-size: 10px;
+	line-height: 1.5;
+}
+.tools-popover button.ocr-start {
+	width: 100%;
+	display: flex;
+	justify-content: center;
+	padding: 10px;
+	margin-top: 16px;
+	background: var(--accent);
+	color: white;
+	border: 0;
+	border-radius: 5px;
+	font-size: 12px;
+	font-weight: 800;
+}
+.tools-popover button.ocr-start:hover {
+	background: var(--accent-dark);
 }
 .editor-subbar {
 	height: 47px;

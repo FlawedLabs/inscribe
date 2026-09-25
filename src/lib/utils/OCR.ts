@@ -1,91 +1,157 @@
-import { get } from 'svelte/store';
-import Tesseract from 'tesseract.js';
-import { canvasList, updatedFile } from '../../stores/FileStore';
-import { rgb } from 'pdf-lib';
-export const addOCR = async () => {
-	const { createWorker } = Tesseract;
+import { base } from '$app/paths';
+import { PDFDocument, StandardFonts, degrees } from 'pdf-lib';
+import type { PDFDocumentProxy } from 'pdfjs-dist';
+import { createWorker } from 'tesseract.js';
 
-	const worker = await createWorker('eng', 1, {
-		corePath: '/node_modules/tesseract.js-core',
-		workerPath: '/node_modules/tesseract.js/dist/worker.min.js',
-		logger: (m) => console.log(m)
-	});
+export type OcrLanguage = 'eng' | 'fra' | 'eng+fra';
+export type OcrProgress =
+	| { phase: 'checking'; page: number; total: number }
+	| { phase: 'loading'; percent: number }
+	| { phase: 'recognizing'; page: number; total: number; percent: number }
+	| { phase: 'saving' };
 
-	const OCRBlocks = [];
+export type OcrResult = {
+	document: PDFDocument;
+	pagesProcessed: number;
+	pagesUpdated: number;
+	pagesSkipped: number;
+	wordsAdded: number;
+};
 
-	const canvasListArray = get(canvasList);
+type OcrWord = {
+	text: string;
+	confidence: number;
+	bbox: { x0: number; x1: number; y0: number; y1: number };
+};
 
-	for (const page of canvasListArray) {
-		const res = await worker.recognize(page, { pdfTitle: 'testOCR' }, { pdf: true });
-		OCRBlocks.push(res.data.words);
+const supportedText = (text: string, font: Awaited<ReturnType<PDFDocument['embedFont']>>) =>
+	Array.from(text)
+		.filter((character) => {
+			try {
+				font.encodeText(character);
+				return true;
+			} catch {
+				return false;
+			}
+		})
+		.join('');
+
+/** Adds a transparent, searchable text layer to pages that contain no selectable text. */
+export async function applyOcrToPdf(
+	source: PDFDocument,
+	viewer: PDFDocumentProxy,
+	language: OcrLanguage,
+	onProgress: (progress: OcrProgress) => void = () => {}
+): Promise<OcrResult> {
+	if (source.getPageCount() !== viewer.numPages) throw new Error('PDF page count mismatch');
+
+	const scannedPages: number[] = [];
+	for (let pageNumber = 1; pageNumber <= viewer.numPages; pageNumber++) {
+		onProgress({ phase: 'checking', page: pageNumber, total: viewer.numPages });
+		const page = await viewer.getPage(pageNumber);
+		const text = await page.getTextContent();
+		const hasText = text.items.some((item) => 'str' in item && item.str.trim().length > 0);
+		if (!hasText) scannedPages.push(pageNumber);
 	}
 
-	const fileToOCR = get(updatedFile);
+	if (!scannedPages.length) {
+		return {
+			document: source,
+			pagesProcessed: 0,
+			pagesUpdated: 0,
+			pagesSkipped: viewer.numPages,
+			wordsAdded: 0
+		};
+	}
 
-	const pages = fileToOCR.getPages();
-
-	OCRBlocks.forEach((words, i) => {
-		const page = pages[i];
-
-		words?.forEach((word) => {
-			const { bbox, text } = word;
-			const { x0, x1, y0, y1 } = bbox;
-
-			const xHeightChars = 'acegmnorsuvwxz';
-			const heights: number[] = [];
-
-			words.forEach((word) => {
-				word.symbols.forEach((symbol) => {
-					if (xHeightChars.includes(symbol.text)) {
-						const { y0, y1 } = symbol.bbox;
-						heights.push(y1 - y0);
-					}
+	// Work on a copy so a failed recognition cannot leave the open document half-edited.
+	const result = await PDFDocument.load(await source.save());
+	const font = await result.embedFont(StandardFonts.Helvetica);
+	const assetRoot = `${base}/ocr`;
+	let currentPage = 0;
+	onProgress({ phase: 'loading', percent: 0 });
+	const worker = await createWorker(language, 1, {
+		workerPath: `${assetRoot}/worker.min.js`,
+		corePath: assetRoot,
+		logger: (message) => {
+			const percent = Math.floor((message.progress || 0) * 10) * 10;
+			if (currentPage)
+				onProgress({
+					phase: 'recognizing',
+					page: currentPage,
+					total: scannedPages.length,
+					percent
 				});
-			});
-
-			heights.sort((a, b) => a - b);
-			const medianHeight = heights[Math.floor(heights.length / 2)];
-
-			const pdfWidth = page.getWidth();
-			const pdfHeight = page.getHeight();
-			const canvasWidth = canvasListArray[i].width;
-			const canvasHeight = canvasListArray[i].height;
-
-			const x = (x0 / canvasWidth) * pdfWidth;
-			const y = pdfHeight - (y1 / canvasHeight) * pdfHeight;
-
-			console.log({ i, x0, x1, y0, y1 });
-
-			page.drawText(text, {
-				x: x,
-				y: y,
-				size: medianHeight,
-				color: rgb(0, 0, 0)
-			});
-		});
+			else onProgress({ phase: 'loading', percent });
+		}
 	});
 
-	worker.terminate();
+	let wordsAdded = 0;
+	let pagesUpdated = 0;
+	try {
+		for (const [index, pageNumber] of scannedPages.entries()) {
+			currentPage = index + 1;
+			onProgress({
+				phase: 'recognizing',
+				page: currentPage,
+				total: scannedPages.length,
+				percent: 0
+			});
+			const page = await viewer.getPage(pageNumber);
+			const baseViewport = page.getViewport({ scale: 1 });
+			const renderScale = Math.min(2, 2400 / Math.max(baseViewport.width, baseViewport.height));
+			const viewport = page.getViewport({ scale: renderScale });
+			const canvas = document.createElement('canvas');
+			canvas.width = Math.ceil(viewport.width);
+			canvas.height = Math.ceil(viewport.height);
+			const context = canvas.getContext('2d');
+			if (!context) throw new Error('Canvas is unavailable');
+			try {
+				await page.render({ canvasContext: context, viewport }).promise;
+				const recognition = await worker.recognize(canvas);
+				const target = result.getPage(pageNumber - 1);
+				const wordsBeforePage = wordsAdded;
+				for (const word of (recognition.data.words ?? []) as OcrWord[]) {
+					if (!word.text.trim() || word.confidence < 35) continue;
+					const text = supportedText(word.text.trim(), font);
+					if (!text) continue;
+					const { x0, x1, y0, y1 } = word.bbox;
+					if (![x0, x1, y0, y1].every(Number.isFinite) || x1 <= x0 || y1 <= y0) continue;
+					const [x, y] = viewport.convertToPdfPoint(x0, y1);
+					const [endX, endY] = viewport.convertToPdfPoint(x1, y1);
+					const [topX, topY] = viewport.convertToPdfPoint(x0, y0);
+					const width = Math.hypot(endX - x, endY - y);
+					const height = Math.hypot(topX - x, topY - y);
+					const size = Math.max(
+						1,
+						Math.min(height * 0.88, width / Math.max(font.widthOfTextAtSize(text, 1), 0.1))
+					);
+					target.drawText(text, {
+						x,
+						y,
+						size,
+						font,
+						rotate: degrees((Math.atan2(endY - y, endX - x) * 180) / Math.PI),
+						opacity: 0
+					});
+					wordsAdded++;
+				}
+				if (wordsAdded > wordsBeforePage) pagesUpdated++;
+			} finally {
+				canvas.width = 0;
+				canvas.height = 0;
+			}
+		}
+	} finally {
+		await worker.terminate();
+	}
 
-	const pdfBytes = await fileToOCR.save();
-
-	const x = new Blob([pdfBytes], { type: 'application/pdf' });
-	const url = URL.createObjectURL(x);
-
-	const a = document.createElement('a');
-	a.href = url;
-	a.download = 'xyz.pdf';
-	document.body.appendChild(a);
-	a.click();
-	a.remove();
-};
-
-// Transform canvas to image for compatibility with TesseractJS
-export const getCanvasAsImages = (canvas: HTMLCanvasElement[]) => {
-	return canvas.map((c) => {
-		const img = new Image();
-		img.src = c.toDataURL();
-
-		return img;
-	});
-};
+	onProgress({ phase: 'saving' });
+	return {
+		document: result,
+		pagesProcessed: scannedPages.length,
+		pagesUpdated,
+		pagesSkipped: viewer.numPages - scannedPages.length,
+		wordsAdded
+	};
+}

@@ -4,7 +4,6 @@
 	import { load } from '@/utils/PDFjsHelper';
 	import { save } from '@/utils/PDFLibHelper';
 	import { openedFile, updatedFile } from '../../../stores/FileStore';
-	import { addOCR } from '@/utils/OCR';
 
 	const mergePDF = () => {
 		const input = document.createElement('input');
@@ -25,10 +24,6 @@
 			input.remove();
 		};
 		input.click();
-	};
-
-	const runOCR = () => {
-		addOCR();
 	};
 </script>
 
@@ -52,8 +47,6 @@
 				Merge a PDF
 				<Menubar.Shortcut>⌘T</Menubar.Shortcut>
 			</Menubar.Item>
-
-			<Menubar.Item on:click={runOCR}>Optical Character Recognition (OCR)</Menubar.Item>
 		</Menubar.Content>
 	</Menubar.Menu>
 </Menubar.Root>

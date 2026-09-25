@@ -19,11 +19,11 @@
 	import { PDFDocument } from 'pdf-lib';
 	import { TextLayer, type PDFDocumentProxy } from 'pdfjs-dist/legacy/build/pdf.mjs';
 	import 'pdfjs-dist/web/pdf_viewer.css';
-	import { canvasList, fileName, processedFile, updatedFile } from '../../stores/FileStore';
+	import { fileName, processedFile, updatedFile } from '../../stores/FileStore';
 	import { load as loadPDFjs } from '@/utils/PDFjsHelper';
 	import { save as savePDF } from '@/utils/PDFLibHelper';
 	import { openAndMergePDFs, duplicatePage } from '@/utils/PDFEdition';
-	import { addOCR } from '@/utils/OCR';
+	import { applyOcrToPdf, type OcrLanguage, type OcrProgress } from '@/utils/OCR';
 
 	let pages: number[] = [];
 	let thumbnails: HTMLCanvasElement[] = [];
@@ -31,10 +31,13 @@
 	let textLayers: HTMLDivElement[] = [];
 	let pageElements: HTMLElement[] = [];
 	let mergeInput: HTMLInputElement;
+	let toolsButton: HTMLButtonElement;
 	let selectedPage = 1;
 	let scale = 1;
 	let sidebarOpen = true;
 	let toolsOpen = false;
+	let ocrLanguage: OcrLanguage = 'fra';
+	let ocrProgress = '';
 	let busy = false;
 	let dirty = false;
 	let status = '';
@@ -115,7 +118,6 @@
 				error = `La page ${pageNumber} n’a pas pu être affichée.`;
 			}
 		}
-		if (token === refreshToken) canvasList.set(pageCanvases);
 	}
 
 	const goToPage = (pageNumber: number) => {
@@ -195,9 +197,45 @@
 			await savePDF();
 			dirty = false;
 		}, 'PDF exporté dans vos téléchargements.');
-	const ocr = () => {
+	const describeOcrProgress = (progress: OcrProgress) => {
+		switch (progress.phase) {
+			case 'checking':
+				return `Analyse du texte existant · page ${progress.page}/${progress.total}`;
+			case 'loading':
+				return `Chargement du moteur OCR · ${progress.percent} %`;
+			case 'recognizing':
+				return `Reconnaissance · page ${progress.page}/${progress.total} · ${progress.percent} %`;
+			case 'saving':
+				return 'Création du texte sélectionnable…';
+		}
+	};
+	const ocr = async () => {
+		if (busy) return;
 		toolsOpen = false;
-		void runAction(addOCR, 'Reconnaissance de texte terminée.');
+		busy = true;
+		error = '';
+		status = '';
+		ocrProgress = 'Analyse du document…';
+		try {
+			const result = await applyOcrToPdf($updatedFile, $processedFile, ocrLanguage, (progress) => {
+				ocrProgress = describeOcrProgress(progress);
+			});
+			if (result.wordsAdded) {
+				$updatedFile = result.document;
+				await syncPdf();
+				status = `Texte ajouté à ${result.pagesUpdated} ${result.pagesUpdated === 1 ? 'page' : 'pages'}. Exportez le PDF pour le conserver.`;
+			} else if (result.pagesProcessed) {
+				status = 'Aucun texte reconnu sur les pages sans texte.';
+			} else {
+				status = 'Toutes les pages contiennent déjà du texte sélectionnable.';
+			}
+		} catch {
+			error =
+				'L’OCR a échoué. Vérifiez votre connexion lors du premier téléchargement du modèle de langue, puis réessayez.';
+		} finally {
+			ocrProgress = '';
+			busy = false;
+		}
 	};
 	const back = () => {
 		if (
@@ -210,6 +248,15 @@
 		scale = Math.max(0.6, Math.min(1.6, Math.round((scale + change) * 10) / 10));
 	};
 </script>
+
+<svelte:window
+	on:keydown={(event) => {
+		if (event.key === 'Escape' && toolsOpen) {
+			toolsOpen = false;
+			toolsButton?.focus();
+		}
+	}}
+/>
 
 <svelte:head><title>{$fileName || 'Document'} — Inscribe</title></svelte:head>
 
@@ -248,15 +295,33 @@
 			>
 			<div class="tools-wrap">
 				<button
+					bind:this={toolsButton}
 					class="icon-button tools-button"
 					type="button"
 					on:click={() => (toolsOpen = !toolsOpen)}
 					aria-label="Autres outils"
+					aria-haspopup="true"
 					aria-expanded={toolsOpen}
 					title="Autres outils"><Menu size={20} /></button
-				>{#if toolsOpen}<div class="tools-popover">
-						<button type="button" on:click={ocr} disabled={busy}
-							><ScanText size={17} /> OCR expérimental</button
+				>{#if toolsOpen}<div
+						class="tools-popover"
+						role="group"
+						aria-label="Reconnaissance de texte"
+					>
+						<strong><ScanText size={17} /> Reconnaître le texte</strong>
+						<p>Ajoute du texte sélectionnable aux pages qui n’en contiennent pas.</p>
+						<label for="ocr-language">Langue du document</label>
+						<select id="ocr-language" bind:value={ocrLanguage} disabled={busy}>
+							<option value="fra">Français</option>
+							<option value="eng">Anglais</option>
+							<option value="eng+fra">Français et anglais</option>
+						</select>
+						<small
+							>Le modèle de langue est téléchargé au premier lancement. Le PDF reste sur cet
+							appareil.</small
+						>
+						<button class="ocr-start" type="button" on:click={ocr} disabled={busy}
+							>Lancer l’OCR</button
 						>
 					</div>{/if}
 			</div>
@@ -296,13 +361,18 @@
 			>
 		</div>
 	</div>
-	{#if error || status}<div class:error class="editor-notice" role={error ? 'alert' : 'status'}>
-			{error || status}<button
+	{#if error || status || ocrProgress}<div
+			class:error
+			class="editor-notice"
+			role={error ? 'alert' : 'status'}
+		>
+			{error || ocrProgress || status}<button
 				type="button"
 				on:click={() => {
 					error = '';
 					status = '';
 				}}
+				disabled={busy}
 				aria-label="Fermer le message"><X size={16} /></button
 			>
 		</div>{/if}

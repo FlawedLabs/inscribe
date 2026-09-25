@@ -4,8 +4,8 @@
 	"description": "",
 	"type": "module",
 	"scripts": {
-		"dev": "vite dev",
-		"build": "vite build",
+		"dev": "node scripts/prepare-ocr-assets.mjs && vite dev",
+		"build": "node scripts/prepare-ocr-assets.mjs && vite build",
 		"preview": "vite preview",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
