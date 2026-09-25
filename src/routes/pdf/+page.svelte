@@ -28,6 +28,7 @@
 	import { save as savePDF } from '@/utils/PDFLibHelper';
 	import { mergePDFs, duplicatePage, removePage, reorderPage } from '@/utils/PDFEdition';
 	import { applyOcrToPdf, type OcrLanguage, type OcrProgress } from '@/utils/OCR';
+	import * as ContextMenu from '$lib/components/ui/context-menu';
 
 	let pages: number[] = [];
 	let thumbnails: HTMLCanvasElement[] = [];
@@ -37,6 +38,7 @@
 	let mergeInput: HTMLInputElement;
 	let toolsButton: HTMLButtonElement;
 	let selectedPage = 1;
+	let contextMenuPage: number | null = null;
 	let draggedPage: number | null = null;
 	let dropTargetPage: number | null = null;
 	let scale = 1;
@@ -438,38 +440,64 @@
 				<div class="sidebar-heading">
 					<span>PAGES</span><span>{String(pages.length).padStart(2, '0')}</span>
 				</div>
-				<div class="thumbnail-list">
-					{#each pages as page (page)}<button
-							class:active={selectedPage === page}
-							class:dragging={draggedPage === page}
-							class:drop-before={dropTargetPage === page &&
-								draggedPage !== null &&
-								draggedPage > page}
-							class:drop-after={dropTargetPage === page &&
-								draggedPage !== null &&
-								draggedPage < page}
-							class="thumbnail-item"
-							type="button"
-							draggable={!busy}
-							on:dragstart={(event) => startPageDrag(event, page)}
-							on:dragover={(event) => overPage(event, page)}
-							on:drop={(event) => dropPage(event, page)}
-							on:dragend={endPageDrag}
-							on:click={() => goToPage(page)}
-							aria-label={`Aller à la page ${page}`}
-							aria-describedby="page-reorder-hint"
-							aria-current={selectedPage === page ? 'page' : undefined}
-							><span class="thumbnail-paper"
-								><canvas bind:this={thumbnails[page - 1]}></canvas></span
-							><span class="thumbnail-caption"
-								><span>{String(page).padStart(2, '0')}</span><span>Page {page}</span></span
-							></button
-						>{/each}
-				</div>
+				<ContextMenu.Root>
+					<ContextMenu.Trigger class="thumbnail-list">
+						{#each pages as page (page)}<button
+								class:active={selectedPage === page}
+								class:dragging={draggedPage === page}
+								class:drop-before={dropTargetPage === page &&
+									draggedPage !== null &&
+									draggedPage > page}
+								class:drop-after={dropTargetPage === page &&
+									draggedPage !== null &&
+									draggedPage < page}
+								class="thumbnail-item"
+								type="button"
+								draggable={!busy}
+								on:dragstart={(event) => startPageDrag(event, page)}
+								on:dragover={(event) => overPage(event, page)}
+								on:drop={(event) => dropPage(event, page)}
+								on:dragend={endPageDrag}
+								on:click={() => goToPage(page)}
+								on:contextmenu={() => (contextMenuPage = page)}
+								aria-label={`Aller à la page ${page}`}
+								aria-describedby="page-reorder-hint"
+								aria-current={selectedPage === page ? 'page' : undefined}
+								><span class="thumbnail-paper"
+									><canvas bind:this={thumbnails[page - 1]}></canvas></span
+								><span class="thumbnail-caption"
+									><span>{String(page).padStart(2, '0')}</span><span>Page {page}</span></span
+								></button
+							>{/each}
+					</ContextMenu.Trigger>
+					<ContextMenu.Content class="page-context-menu">
+						<ContextMenu.Item
+							on:click={() => contextMenuPage !== null && move(contextMenuPage, -1)}
+							disabled={busy || contextMenuPage === null || contextMenuPage === 1}
+							><ChevronUp size={16} /> Monter la page</ContextMenu.Item
+						>
+						<ContextMenu.Item
+							on:click={() => contextMenuPage !== null && move(contextMenuPage, 1)}
+							disabled={busy || contextMenuPage === null || contextMenuPage === pages.length}
+							><ChevronDown size={16} /> Descendre la page</ContextMenu.Item
+						>
+						<ContextMenu.Separator />
+						<ContextMenu.Item
+							on:click={() => contextMenuPage !== null && duplicate(contextMenuPage)}
+							disabled={busy || contextMenuPage === null}
+							><Copy size={16} /> Dupliquer la page</ContextMenu.Item
+						>
+						<ContextMenu.Item
+							on:click={() => contextMenuPage !== null && remove(contextMenuPage)}
+							disabled={busy || contextMenuPage === null || pages.length <= 1}
+							class="context-danger"><Trash2 size={16} /> Supprimer la page</ContextMenu.Item
+						>
+					</ContextMenu.Content>
+				</ContextMenu.Root>
 				<div class="sidebar-footer" id="page-reorder-hint">
-					<FileText size={15} /><span class="desktop-hint">Glissez pour réordonner</span><span
-						class="touch-hint">Utilisez les flèches sous chaque page</span
-					>
+					<FileText size={15} /><span class="desktop-hint"
+						>Glissez pour réordonner · clic droit pour les actions</span
+					><span class="touch-hint">Utilisez les flèches sous chaque page</span>
 				</div>
 			</aside>{/if}
 		<main class="document-stage" aria-label="Aperçu du document">

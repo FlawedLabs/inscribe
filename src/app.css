@@ -698,6 +698,27 @@ input:focus-visible {
 	color: var(--accent);
 	font-weight: 800;
 }
+.page-context-menu {
+	min-width: 192px;
+	border: 1px solid var(--line);
+	background: var(--paper);
+	color: var(--ink);
+	box-shadow: 0 12px 32px #24342825;
+}
+.page-context-menu [role='menuitem'] {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+.page-context-menu [role='menuitem'][data-highlighted] {
+	background: #e9eee7;
+}
+.page-context-menu [role='menuitem'][data-disabled] {
+	opacity: 0.45;
+}
+.page-context-menu .context-danger {
+	color: #a4492e;
+}
 .sidebar-footer {
 	margin-top: auto;
 	padding: 14px 18px;

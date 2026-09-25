@@ -56,3 +56,34 @@ test('keeps different recent PDFs with the same filename', async ({ page }) => {
 	await upload(await second.save());
 	await expect(page.locator('.recent-row')).toHaveCount(2);
 });
+
+test('restores page actions from the thumbnail context menu', async ({ page }) => {
+	const document = await PDFDocument.create();
+	document.addPage([300, 400]);
+	document.addPage([400, 500]);
+	await page.goto('/');
+	await page.getByLabel('Sélectionner un fichier PDF').setInputFiles({
+		name: 'pages.pdf',
+		mimeType: 'application/pdf',
+		buffer: Buffer.from(await document.save())
+	});
+	const thumbnail = (number: number) =>
+		page.getByRole('button', { name: `Aller à la page ${number}` });
+	await thumbnail(1).dragTo(thumbnail(2));
+	await expect(page.getByText('Ordre des pages modifié.')).toBeVisible();
+	await thumbnail(1).click({ button: 'right' });
+	await expect(page.getByRole('menuitem', { name: 'Dupliquer la page' })).toBeVisible();
+	await page.getByRole('menuitem', { name: 'Dupliquer la page' }).click();
+	await expect(thumbnail(3)).toBeVisible();
+	await thumbnail(2).click({ button: 'right' });
+	page.once('dialog', (dialog) => dialog.accept());
+	await page.getByRole('menuitem', { name: 'Supprimer la page' }).click();
+	await expect(thumbnail(3)).toHaveCount(0);
+	const downloadPromise = page.waitForEvent('download');
+	await page.getByRole('button', { name: 'Exporter le PDF' }).click();
+	const download = await downloadPromise;
+	const exported = await PDFDocument.load(
+		await (await import('node:fs/promises')).readFile(await download.path())
+	);
+	expect(exported.getPage(0).getWidth()).toBe(400);
+});
