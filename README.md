@@ -2,6 +2,8 @@
 
 Éditeur PDF local construit avec SvelteKit et Tauri. Il permet d’ouvrir un PDF, de réorganiser, dupliquer ou supprimer des pages, de réunir deux PDF et d’exporter le résultat.
 
+Dans l’éditeur, glissez les miniatures pour changer l’ordre des pages. Les flèches sous chaque page offrent la même action au clavier et sur écran tactile.
+
 ## Démarrer
 
 Prérequis : Node.js, pnpm et Rust.

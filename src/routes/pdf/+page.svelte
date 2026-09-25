@@ -33,6 +33,8 @@
 	let mergeInput: HTMLInputElement;
 	let toolsButton: HTMLButtonElement;
 	let selectedPage = 1;
+	let draggedPage: number | null = null;
+	let dropTargetPage: number | null = null;
 	let scale = 1;
 	let sidebarOpen = true;
 	let toolsOpen = false;
@@ -167,19 +169,59 @@
 		}, 'Page supprimée. Pensez à exporter le PDF.');
 	};
 
-	const move = (pageNumber: number, direction: -1 | 1) => {
-		const target = pageNumber - 1 + direction;
-		if (target < 0 || target >= pages.length) return;
+	const reorder = (fromPage: number, toPage: number) => {
+		if (
+			busy ||
+			fromPage === toPage ||
+			fromPage < 1 ||
+			toPage < 1 ||
+			fromPage > pages.length ||
+			toPage > pages.length
+		)
+			return;
 		void runAction(async () => {
 			const source = $updatedFile;
 			const order = source.getPageIndices();
-			[order[pageNumber - 1], order[target]] = [order[target], order[pageNumber - 1]];
+			const [movedPage] = order.splice(fromPage - 1, 1);
+			order.splice(toPage - 1, 0, movedPage);
 			const reordered = await PDFDocument.create();
 			for (const page of await reordered.copyPages(source, order)) reordered.addPage(page);
 			$updatedFile = reordered;
-			selectedPage = target + 1;
+			selectedPage = toPage;
 			await syncPdf();
 		}, 'Ordre des pages modifié. Pensez à exporter le PDF.');
+	};
+	const move = (pageNumber: number, direction: -1 | 1) =>
+		reorder(pageNumber, pageNumber + direction);
+
+	const startPageDrag = (event: DragEvent, pageNumber: number) => {
+		if (busy) {
+			event.preventDefault();
+			return;
+		}
+		draggedPage = pageNumber;
+		if (event.dataTransfer) {
+			event.dataTransfer.effectAllowed = 'move';
+			event.dataTransfer.setData('text/plain', String(pageNumber));
+		}
+	};
+	const overPage = (event: DragEvent, pageNumber: number) => {
+		if (draggedPage === null || draggedPage === pageNumber) return;
+		event.preventDefault();
+		if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+		dropTargetPage = pageNumber;
+	};
+	const dropPage = (event: DragEvent, pageNumber: number) => {
+		if (draggedPage === null) return;
+		event.preventDefault();
+		const fromPage = draggedPage;
+		draggedPage = null;
+		dropTargetPage = null;
+		reorder(fromPage, pageNumber);
+	};
+	const endPageDrag = () => {
+		draggedPage = null;
+		dropTargetPage = null;
 	};
 
 	const merge = (event: Event) => {
@@ -384,10 +426,23 @@
 				<div class="thumbnail-list">
 					{#each pages as page (page)}<button
 							class:active={selectedPage === page}
+							class:dragging={draggedPage === page}
+							class:drop-before={dropTargetPage === page &&
+								draggedPage !== null &&
+								draggedPage > page}
+							class:drop-after={dropTargetPage === page &&
+								draggedPage !== null &&
+								draggedPage < page}
 							class="thumbnail-item"
 							type="button"
+							draggable={!busy}
+							on:dragstart={(event) => startPageDrag(event, page)}
+							on:dragover={(event) => overPage(event, page)}
+							on:drop={(event) => dropPage(event, page)}
+							on:dragend={endPageDrag}
 							on:click={() => goToPage(page)}
 							aria-label={`Aller à la page ${page}`}
+							aria-describedby="page-reorder-hint"
 							aria-current={selectedPage === page ? 'page' : undefined}
 							><span class="thumbnail-paper"
 								><canvas bind:this={thumbnails[page - 1]}></canvas></span
@@ -396,7 +451,11 @@
 							></button
 						>{/each}
 				</div>
-				<div class="sidebar-footer"><FileText size={15} /> Glissez le contenu pour lire</div>
+				<div class="sidebar-footer" id="page-reorder-hint">
+					<FileText size={15} /><span class="desktop-hint">Glissez pour réordonner</span><span
+						class="touch-hint">Utilisez les flèches sous chaque page</span
+					>
+				</div>
 			</aside>{/if}
 		<main class="document-stage" aria-label="Aperçu du document">
 			<div class="stage-inner">
