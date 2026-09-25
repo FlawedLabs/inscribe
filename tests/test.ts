@@ -58,6 +58,11 @@ test('keeps different recent PDFs with the same filename', async ({ page }) => {
 });
 
 test('restores page actions from the thumbnail context menu', async ({ page }) => {
+	await page.addInitScript(() => {
+		window.confirm = () => {
+			throw new Error('The native confirmation must not be used for page deletion.');
+		};
+	});
 	const document = await PDFDocument.create();
 	document.addPage([300, 400]);
 	document.addPage([400, 500]);
@@ -76,16 +81,32 @@ test('restores page actions from the thumbnail context menu', async ({ page }) =
 	await page.getByRole('menuitem', { name: 'Dupliquer la page' }).click();
 	await expect(thumbnail(3)).toBeVisible();
 	await thumbnail(2).click({ button: 'right' });
-	page.once('dialog', (dialog) => dialog.accept());
 	await page.getByRole('menuitem', { name: 'Supprimer la page' }).click();
+	const confirmation = page.getByRole('dialog', { name: 'Supprimer la page 2 ?' });
+	await expect(confirmation).toBeVisible();
+	await confirmation.getByRole('button', { name: 'Supprimer la page' }).click();
+	await expect(page.getByText('Page supprimée.')).toBeVisible();
 	await expect(thumbnail(3)).toHaveCount(0);
+	await page.getByRole('button', { name: 'Supprimer la page 1' }).click();
+	await expect(page.getByRole('dialog', { name: 'Supprimer la page 1 ?' })).toBeVisible();
+	await page.getByRole('button', { name: 'Annuler' }).click();
+	await expect(thumbnail(2)).toBeVisible();
+	await page.getByRole('button', { name: 'Supprimer la page 1' }).click();
+	await page
+		.getByRole('dialog', { name: 'Supprimer la page 1 ?' })
+		.getByRole('button', { name: 'Supprimer la page' })
+		.click();
+	await expect(page.getByText('Page supprimée.')).toBeVisible();
+	await expect(thumbnail(2)).toHaveCount(0);
+	await expect(page.getByRole('button', { name: 'Supprimer la page 1' })).toBeDisabled();
 	const downloadPromise = page.waitForEvent('download');
 	await page.getByRole('button', { name: 'Exporter le PDF' }).click();
 	const download = await downloadPromise;
 	const exported = await PDFDocument.load(
 		await (await import('node:fs/promises')).readFile(await download.path())
 	);
-	expect(exported.getPage(0).getWidth()).toBe(400);
+	expect(exported.getPageCount()).toBe(1);
+	expect(exported.getPage(0).getWidth()).toBe(300);
 });
 
 test('shows metadata from the imported PDF after editing pages', async ({ page }) => {

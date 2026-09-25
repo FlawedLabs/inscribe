@@ -643,6 +643,53 @@ input:focus-visible {
 	font-size: 12px;
 	color: var(--muted-ink);
 }
+.delete-confirm-dialog {
+	width: min(420px, calc(100vw - 32px));
+}
+.delete-confirm-body {
+	padding: 27px 27px 18px;
+}
+.delete-confirm-icon {
+	display: grid;
+	place-items: center;
+	width: 40px;
+	height: 40px;
+	margin-bottom: 17px;
+	border-radius: 9px;
+	background: #fbece5;
+	color: #a4492e;
+}
+.delete-confirm-body h2 {
+	margin: 0;
+	font-size: 18px;
+	line-height: 1.3;
+}
+.delete-confirm-body p {
+	margin: 10px 0 0;
+	color: var(--muted-ink);
+	font-size: 12px;
+	line-height: 1.6;
+}
+.delete-confirm-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 9px;
+	padding: 16px 27px;
+	border-top: 1px solid var(--line);
+}
+.delete-confirm-button {
+	min-height: 38px;
+	padding: 0 14px;
+	border: 0;
+	border-radius: 7px;
+	background: #a4492e;
+	color: white;
+	font-size: 12px;
+	font-weight: 800;
+}
+.delete-confirm-button:hover {
+	background: #873b26;
+}
 .editor-subbar {
 	height: 47px;
 	flex: none;

@@ -40,6 +40,8 @@
 	let toolsButton: HTMLButtonElement;
 	let infoButton: HTMLButtonElement;
 	let infoDialog: HTMLDialogElement;
+	let deleteDialog: HTMLDialogElement;
+	let pageToDelete: number | null = null;
 	let importedMetadata: {
 		name: string;
 		size: string;
@@ -270,16 +272,26 @@
 			selectedPage = pageNumber + 1;
 		}, 'Page dupliquée. Pensez à exporter le PDF.');
 
-	const remove = (pageNumber: number) => {
+	const remove = async (pageNumber: number) => {
+		if (busy) return;
 		if (pages.length <= 1) {
 			error = 'Un PDF doit conserver au moins une page.';
 			return;
 		}
-		if (!window.confirm(`Supprimer la page ${pageNumber} ?`)) return;
+		pageToDelete = pageNumber;
+		await tick();
+		if (!deleteDialog.open) deleteDialog.showModal();
+	};
+
+	const confirmRemoval = () => {
+		const pageNumber = pageToDelete;
+		deleteDialog.close();
+		pageToDelete = null;
+		if (pageNumber === null) return;
 		void runAction(async () => {
 			const next = await removePage($updatedFile, pageNumber);
 			await applyDocument(next);
-			selectedPage = Math.min(pageNumber, pages.length - 1);
+			selectedPage = Math.min(pageNumber, next.getPageCount());
 		}, 'Page supprimée. Pensez à exporter le PDF.');
 	};
 
@@ -537,6 +549,28 @@
 		{:else}
 			<p class="pdf-info-loading">Lecture des métadonnées…</p>
 		{/if}
+	</dialog>
+	<dialog
+		bind:this={deleteDialog}
+		class="pdf-info-dialog delete-confirm-dialog"
+		aria-labelledby="delete-page-title"
+		on:close={() => (pageToDelete = null)}
+	>
+		<div class="delete-confirm-body">
+			<span class="delete-confirm-icon"><Trash2 size={21} strokeWidth={1.8} /></span>
+			<h2 id="delete-page-title">Supprimer la page {pageToDelete} ?</h2>
+			<p>
+				Cette page sera retirée du PDF en cours. Vous pourrez conserver le résultat en l’exportant.
+			</p>
+		</div>
+		<div class="delete-confirm-actions">
+			<button type="button" class="toolbar-button" on:click={() => deleteDialog.close()}
+				>Annuler</button
+			>
+			<button type="button" class="delete-confirm-button" on:click={confirmRemoval}
+				>Supprimer la page</button
+			>
+		</div>
 	</dialog>
 	<div class="editor-subbar">
 		<div class="subbar-left">
