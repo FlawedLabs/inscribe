@@ -5,5 +5,7 @@ src-tauri/gen/
 src-tauri/target/
 static/ocr/
 test-results/
+playwright-report/
+.pnpm-store/
 pnpm-lock.yaml
 src-tauri/Cargo.lock

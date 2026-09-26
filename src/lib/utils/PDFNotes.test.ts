@@ -1,9 +1,33 @@
 import { describe, expect, it } from 'vitest';
-import { PDFDocument } from 'pdf-lib';
+import { PDFDocument, PDFHexString } from 'pdf-lib';
 import { addNote, listNotes, removeNote, updateNote } from './PDFNotes';
 import { duplicatePage, reorderPage } from './PDFEdition';
 
 describe('PDF notes', () => {
+	it('skips malformed imported notes while retaining valid annotations', async () => {
+		const source = await PDFDocument.create();
+		const page = source.addPage();
+		for (const properties of [
+			{ Rect: 'invalid', Contents: PDFHexString.fromText('Broken rectangle') },
+			{ Rect: [10, 'invalid', 30, 40], Contents: PDFHexString.fromText('Broken coordinate') },
+			{ Rect: [10, 20, 30, 40], Contents: 42 }
+		]) {
+			page.node.addAnnot(
+				source.context.register(
+					source.context.obj({
+						Type: 'Annot',
+						Subtype: 'Text',
+						...properties
+					})
+				)
+			);
+		}
+		const annotated = await addNote(source, 1, 30, 40, 'Valid note');
+		const reopened = await PDFDocument.load(await annotated.save());
+		expect(listNotes(reopened)).toMatchObject([{ page: 1, text: 'Valid note', x: 30, y: 40 }]);
+		expect(listNotes(reopened)).toHaveLength(1);
+	});
+
 	it('saves Unicode notes as PDF annotations and preserves their page after reordering', async () => {
 		const original = await PDFDocument.create();
 		original.addPage([300, 400]);

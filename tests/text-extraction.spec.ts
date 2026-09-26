@@ -38,9 +38,8 @@ for (const { name, width } of [
 		await expect(extracted).toHaveValue('Page 1\nBonjour le monde\n\nPage 3\nConclusion');
 		await dialog.getByRole('button', { name: 'Copier le texte' }).click();
 		await expect(dialog).toContainText('Texte copié dans le presse-papiers.');
-		expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
-			'Page 1\nBonjour le monde\n\nPage 3\nConclusion'
-		);
+		const clipboard = await page.evaluate(() => navigator.clipboard.readText());
+		expect(clipboard.replace(/\r\n/g, '\n')).toBe('Page 1\nBonjour le monde\n\nPage 3\nConclusion');
 		const downloadPromise = page.waitForEvent('download');
 		await dialog.getByRole('button', { name: 'Télécharger le .txt' }).click();
 		const download = await downloadPromise;

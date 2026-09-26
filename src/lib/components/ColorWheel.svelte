@@ -65,11 +65,9 @@
 	};
 </script>
 
-<div
-	class="color-wheel-control grid gap-[7px] w-[210px] [&_input:focus-visible]:[outline:3px_solid_var(--ring)] [&_input:focus-visible]:[outline-offset:3px] [&_label]:text-[11px] [&_label]:font-extrabold [&_input[type='range']]:w-full [&_input[type='range']]:[accent-color:var(--accent)]"
->
+<div class="grid w-52.5 gap-1.75">
 	<div
-		class="color-wheel relative w-[168px] h-[168px] m-[0_auto_6px] rounded-full [background:radial-gradient(circle,_#fff_0%,_#fff0_74%),_conic-gradient(red,_yellow,_lime,_cyan,_blue,_magenta,_red)] [border:1px_solid_#c9cbc3] cursor-crosshair [touch-action:none] [&:focus-visible]:[outline:3px_solid_var(--ring)] [&:focus-visible]:[outline-offset:3px]"
+		class="color-wheel relative w-42 h-42 m-[0_auto_6px] rounded-full bg-[radial-gradient(circle,#fff_0%,#fff0_74%),conic-gradient(red,yellow,lime,cyan,blue,magenta,red)] border border-[#c9cbc3] cursor-crosshair touch-none focus-visible:outline-offset-3 disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 		role="slider"
 		tabindex="0"
 		aria-label="Roue de couleur, teinte"
@@ -92,14 +90,15 @@
 		}}
 	>
 		<span
-			class="color-wheel-thumb absolute w-[13px] h-[13px] [border:2px_solid_white] rounded-full [box-shadow:0_0_0_1px_#30342d,_0_1px_5px_#0008] [transform:translate(-50%,_-50%)] pointer-events-none"
+			class="color-wheel-thumb absolute w-3.25 h-3.25 border-2 border-white rounded-full shadow-[0_0_0_1px_#30342d,0_1px_5px_#0008] transform-[translate(-50%,-50%)] pointer-events-none"
 			style:left={`${50 + Math.sin((hue * Math.PI) / 180) * saturation * 50}%`}
 			style:top={`${50 - Math.cos((hue * Math.PI) / 180) * saturation * 50}%`}
 		></span>
 	</div>
-	<label for="color-saturation">Saturation</label>
+	<label class="text-[11px] font-extrabold" for="color-saturation">Saturation</label>
 	<input
 		id="color-saturation"
+		class="w-full accent-(--accent) focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring)"
 		type="range"
 		min="0"
 		max="100"
@@ -109,9 +108,10 @@
 			updateValue();
 		}}
 	/>
-	<label for="color-brightness">Luminosité</label>
+	<label class="text-[11px] font-extrabold" for="color-brightness">Luminosité</label>
 	<input
 		id="color-brightness"
+		class="w-full accent-(--accent) focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring)"
 		type="range"
 		min="0"
 		max="100"
@@ -121,14 +121,13 @@
 			updateValue();
 		}}
 	/>
-	<div
-		class="color-wheel-value flex items-center gap-[8px] mt-[5px] [&_input]:w-[38px] [&_input]:h-[28px] [&_input]:p-0 [&_input]:border-0 [&_input]:bg-transparent [&_input]:ml-auto [&_input]:cursor-pointer"
-	>
+	<div class="flex items-center gap-2 mt-1.25">
 		<span
-			class="color-wheel-preview w-[25px] h-[25px] [border:1px_solid_var(--line)] rounded-[5px]"
+			class="color-wheel-preview w-6.25 h-6.25 border border-(--line) rounded-[5px]"
 			style:background={value}
-		></span><label for="custom-color">Couleur</label><input
+		></span><label class="text-[11px] font-extrabold" for="custom-color">Couleur</label><input
 			id="custom-color"
+			class="w-9.5 h-7 ml-auto border-0 bg-transparent cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 			type="color"
 			bind:value
 		/>

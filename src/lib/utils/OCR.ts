@@ -3,6 +3,7 @@ import { PDFDocument, StandardFonts } from 'pdf-lib';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { createWorker } from 'tesseract.js';
 import { OcrTextLayer } from './OcrTextLayer';
+import { cloneDocument } from './PDFLibHelper';
 
 export type OcrLanguage = 'eng' | 'fra' | 'eng+fra';
 export type OcrProgress =
@@ -64,7 +65,7 @@ export async function applyOcrToPdf(
 	}
 
 	// Work on a copy so a failed recognition cannot leave the open document half-edited.
-	const result = await PDFDocument.load(await source.save());
+	const result = await cloneDocument(source);
 	const font = await result.embedFont(StandardFonts.Helvetica);
 	const workerPath = asset('ocr/worker.min.js');
 	const assetRoot = workerPath.slice(0, -'/worker.min.js'.length);

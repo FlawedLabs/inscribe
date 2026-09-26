@@ -189,18 +189,28 @@ test('restores page actions from the thumbnail context menu', async ({ page }) =
 	await confirmation.getByRole('button', { name: 'Supprimer la page' }).click();
 	await expect(page.getByText('Page supprimée.')).toBeVisible();
 	await expect(thumbnail(3)).toHaveCount(0);
-	await page.getByRole('button', { name: 'Supprimer la page 1' }).click();
+	await page
+		.locator('.page-section')
+		.first()
+		.getByRole('button', { name: 'Supprimer la page 1' })
+		.click();
 	await expect(page.getByRole('dialog', { name: 'Supprimer la page 1 ?' })).toBeVisible();
 	await page.getByRole('button', { name: 'Annuler' }).click();
 	await expect(thumbnail(2)).toBeVisible();
-	await page.getByRole('button', { name: 'Supprimer la page 1' }).click();
+	await page
+		.locator('.page-section')
+		.first()
+		.getByRole('button', { name: 'Supprimer la page 1' })
+		.click();
 	await page
 		.getByRole('dialog', { name: 'Supprimer la page 1 ?' })
 		.getByRole('button', { name: 'Supprimer la page' })
 		.click();
 	await expect(page.getByText('Page supprimée.')).toBeVisible();
 	await expect(thumbnail(2)).toHaveCount(0);
-	await expect(page.getByRole('button', { name: 'Supprimer la page 1' })).toBeDisabled();
+	await expect(
+		page.locator('.page-section').first().getByRole('button', { name: 'Supprimer la page 1' })
+	).toBeDisabled();
 	const downloadPromise = page.waitForEvent('download');
 	await page.getByRole('button', { name: 'Exporter le PDF' }).click();
 	await page.getByRole('button', { name: 'Télécharger sans mot de passe' }).click();
@@ -245,7 +255,11 @@ test('shows metadata from the imported PDF after editing pages', async ({ page }
 	await expect(dialog.getByText('2020', { exact: false })).toBeVisible();
 	await page.keyboard.press('Escape');
 	await expect(dialog).not.toBeVisible();
-	await page.getByRole('button', { name: 'Dupliquer la page 1' }).click();
+	await page
+		.locator('.page-section')
+		.first()
+		.getByRole('button', { name: 'Dupliquer la page 1' })
+		.click();
 	await expect(page.getByRole('button', { name: 'Aller à la page 3' })).toBeVisible();
 	await page.getByRole('button', { name: 'Informations sur le PDF' }).click();
 	await expect(dialog.getByText('2 pages')).toBeVisible();

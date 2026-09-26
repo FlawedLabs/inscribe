@@ -62,9 +62,19 @@ test('pinch zoom changes the PDF preview without scaling the mobile interface', 
 			return text && sheet ? text.x - sheet.x : 0;
 		})
 		.toBeGreaterThan(100);
-	const textAfter = await page.locator('.textLayer span').first().boundingBox();
-	expect(Math.abs(textAfter!.x + textAfter!.width / 2 - centerX)).toBeLessThan(35);
-	expect(Math.abs(textAfter!.y + textAfter!.height / 2 - centerY)).toBeLessThan(35);
+	// The zoom value changes before the asynchronous PDF/text rendering completes.
+	await expect
+		.poll(async () => {
+			const bounds = await page.locator('.textLayer span').first().boundingBox();
+			return bounds ? Math.abs(bounds.x + bounds.width / 2 - centerX) : Infinity;
+		})
+		.toBeLessThan(35);
+	await expect
+		.poll(async () => {
+			const bounds = await page.locator('.textLayer span').first().boundingBox();
+			return bounds ? Math.abs(bounds.y + bounds.height / 2 - centerY) : Infinity;
+		})
+		.toBeLessThan(35);
 	const finalHeader = await page.locator('.editor-header').boundingBox();
 	expect(finalHeader!.height).toBe(initialHeader!.height);
 	expect(finalHeader!.width).toBe(initialHeader!.width);

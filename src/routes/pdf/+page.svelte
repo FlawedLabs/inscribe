@@ -1,7 +1,9 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
-
-	import { onMount, tick } from 'svelte';
+	import ActionButton from '#lib/components/ActionButton.svelte';
+	import PDFContentTools from '#lib/components/PDFContentTools.svelte';
+	import { listFormFields, type ContentKind, type PDFFormField } from '#lib/utils/PDFContent.js';
+	import { onMount, tick, untrack } from 'svelte';
+	import { toast } from 'svelte-sonner';
 	import { flip } from 'svelte/animate';
 	import { cubicOut } from 'svelte/easing';
 	import { goto } from '$app/navigation';
@@ -11,6 +13,7 @@
 		ChevronUp,
 		Copy,
 		Download,
+		Pipette,
 		FilePlus2,
 		FileText,
 		Highlighter,
@@ -21,8 +24,10 @@
 		MessageSquarePlus,
 		MessageSquareText,
 		Plus,
+		RotateCw,
 		ScanText,
 		Trash2,
+		Undo2,
 		X
 	} from '@lucide/svelte';
 	import type { PDFDocument } from 'pdf-lib';
@@ -32,10 +37,22 @@
 		type RenderTask
 	} from 'pdfjs-dist/legacy/build/pdf.mjs';
 	import 'pdfjs-dist/web/pdf_viewer.css';
-	import { fileSession } from '../../stores/FileStore.svelte';
+	import { fileSession, getProcessedFile, setProcessedFile } from '../../stores/FileStore.svelte';
 	import { parse as parsePDFjs } from '#lib/utils/PDFjsHelper.js';
 	import { save as savePDF } from '#lib/utils/PDFLibHelper.js';
-	import { mergePDFs, duplicatePage, removePage, reorderPage } from '#lib/utils/PDFEdition.js';
+	import { downloadBlob } from '#lib/utils/Download.js';
+	import {
+		readPDFMetadata,
+		loadPDFMetadata,
+		type ImportedPDFMetadata
+	} from '#lib/utils/PDFMetadata.js';
+	import {
+		mergePDFs,
+		duplicatePage,
+		removePage,
+		reorderPage,
+		rotatePage
+	} from '#lib/utils/PDFEdition.js';
 	import { addNote, listNotes, removeNote, updateNote, type PDFNote } from '#lib/utils/PDFNotes.js';
 	import {
 		addHighlight,
@@ -71,20 +88,7 @@
 	let exportError = $state('');
 	let deleteDialog: HTMLDialogElement = $state(null!);
 	let pageToDelete: number | null = $state(null);
-	let importedMetadata: {
-		name: string;
-		size: string;
-		pages: number;
-		version: string;
-		title: string;
-		author: string;
-		subject: string;
-		keywords: string;
-		creator: string;
-		producer: string;
-		created: string;
-		modified: string;
-	} | null = $state(null);
+	let importedMetadata: ImportedPDFMetadata | null = $state(null);
 	let selectedPage = $state(1);
 	let contextMenuPage: number | null = $state(null);
 	let draggedPage: number | null = $state(null);
@@ -105,7 +109,6 @@
 	let sidebarOpen = $state(true);
 	let toolsOpen = $state(false);
 	let ocrLanguage: OcrLanguage = $state('fra');
-	let ocrProgress = $state('');
 	let textDialog: HTMLDialogElement = $state(null!);
 	let textArea: HTMLTextAreaElement = $state(null!);
 	let extractedText: ExtractedPDFText | null = $state(null);
@@ -116,13 +119,42 @@
 	let extractionController: AbortController | undefined;
 	let busy = $state(false);
 	let dirty = $state(false);
-	let status = $state('');
-	let error = $state('');
 	let mounted = $state(false);
+	const feedbackId = 'editor-feedback';
+	const notePlacementId = 'editor-note-placement';
+	const notifySuccess = (message: string) => {
+		if (mounted)
+			toast.success(message, {
+				id: feedbackId,
+				duration: 6000,
+				important: false,
+				action: undefined
+			});
+	};
+	const notifyError = (message: string) => {
+		if (mounted)
+			toast.error(message, {
+				id: feedbackId,
+				duration: Infinity,
+				important: true,
+				action: undefined
+			});
+	};
+	const notifyOcrProgress = (message: string) => {
+		if (mounted)
+			toast.loading(message, {
+				id: feedbackId,
+				duration: Infinity,
+				important: false,
+				action: undefined
+			});
+	};
 	let refreshToken = 0;
 	let activeRender: RenderTask | undefined;
+	let layoutDocument: PDFDocumentProxy | null = null;
 	let layoutReadyToken = 0;
 	let renderedPages = $state(new Set<number>());
+	let renderedPageIds = $state(new Set<number>());
 	let renderedThumbnails = new Set<number>();
 	let renderLoopActive = false;
 	let renderAgain = false;
@@ -133,6 +165,26 @@
 		[]
 	);
 	let noteMode = $state(false);
+	let placingContent: ContentKind | null = $state(null);
+	let contentTools: PDFContentTools = $state(null!);
+	let formFields: PDFFormField[] = [];
+	let formRects: {
+		field: PDFFormField;
+		left: number;
+		top: number;
+		width: number;
+		height: number;
+	}[] = $state([]);
+	let fieldDrag = $state.raw<{
+		field: PDFFormField;
+		pointerId: number;
+		startX: number;
+		startY: number;
+		startLeft: number;
+		startTop: number;
+		moved: boolean;
+	} | null>(null);
+	let suppressFieldClick = false;
 	let noteModeButton: HTMLButtonElement = $state(null!);
 	let noteDialog: HTMLDialogElement = $state(null!);
 	let noteTextArea: HTMLTextAreaElement = $state(null!);
@@ -162,16 +214,13 @@
 	let lastHighlightId: string | null = $state(null);
 
 	onMount(() => {
-		if (!fileSession.processedFile || !fileSession.updatedFile || !fileSession.openedFile) {
+		if (!getProcessedFile() || !fileSession.updatedFile || !fileSession.openedFile) {
 			void goto('/');
 			return;
 		}
-		void loadImportedMetadata(
-			fileSession.openedFile,
-			fileSession.updatedFile,
-			fileSession.processedFile
-		);
+		void loadImportedMetadata(fileSession.openedFile, fileSession.updatedFile, getProcessedFile());
 		notes = listNotes(fileSession.updatedFile);
+		formFields = listFormFields(fileSession.updatedFile);
 		highlights = listHighlights(fileSession.updatedFile);
 		sidebarOpen = window.innerWidth > 760;
 		const availableWidth =
@@ -184,6 +233,9 @@
 		window.addEventListener('resize', closeSidebarOnMobile);
 		mounted = true;
 		return () => {
+			mounted = false;
+			toast.dismiss(feedbackId);
+			toast.dismiss(notePlacementId);
 			extractionController?.abort();
 			window.removeEventListener('resize', closeSidebarOnMobile);
 			cancelAnimationFrame(scrollFrame);
@@ -192,61 +244,15 @@
 		};
 	});
 
-	const present = (value: string | undefined) => value?.trim() || 'Non renseigné';
-	const formatDate = (value: Date | undefined) => {
-		if (!value || Number.isNaN(value.getTime())) return 'Non renseignée';
-		return new Intl.DateTimeFormat('fr-FR', { dateStyle: 'long', timeStyle: 'short' }).format(
-			value
-		);
-	};
-	const formatSize = (bytes: number) => {
-		const unit = bytes >= 1024 * 1024 ? 'Mo' : bytes >= 1024 ? 'Ko' : 'octets';
-		const divisor = unit === 'Mo' ? 1024 * 1024 : unit === 'Ko' ? 1024 : 1;
-		return `${new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 1 }).format(bytes / divisor)} ${unit}`;
-	};
 	const loadImportedMetadata = async (
 		file: File,
 		document: PDFDocument,
 		viewer: PDFDocumentProxy
 	) => {
-		const original = {
-			name: file.name,
-			size: formatSize(file.size),
-			pages: document.getPageCount(),
-			version: 'Non renseignée',
-			title: present(document.getTitle()),
-			author: present(document.getAuthor()),
-			subject: present(document.getSubject()),
-			keywords: present(document.getKeywords()),
-			creator: present(document.getCreator()),
-			producer: present(document.getProducer()),
-			created: formatDate(document.getCreationDate()),
-			modified: formatDate(document.getModificationDate())
-		};
+		const original = readPDFMetadata(file, document);
 		importedMetadata = original;
-		try {
-			const { info } = await viewer.getMetadata();
-			const values = info as Record<string, unknown>;
-			const fallback = (current: string, key: string) =>
-				current === 'Non renseigné' && typeof values[key] === 'string'
-					? present(values[key] as string)
-					: current;
-			importedMetadata = {
-				...original,
-				version:
-					typeof values.PDFFormatVersion === 'string'
-						? `PDF ${values.PDFFormatVersion}`
-						: original.version,
-				title: fallback(original.title, 'Title'),
-				author: fallback(original.author, 'Author'),
-				subject: fallback(original.subject, 'Subject'),
-				keywords: fallback(original.keywords, 'Keywords'),
-				creator: fallback(original.creator, 'Creator'),
-				producer: fallback(original.producer, 'Producer')
-			};
-		} catch {
-			// The file's basic properties remain available when its metadata dictionary is unreadable.
-		}
+		const complete = await loadPDFMetadata(original, viewer);
+		if (mounted) importedMetadata = complete;
 	};
 	const openInfo = () => {
 		toolsOpen = false;
@@ -255,21 +261,17 @@
 
 	async function renderDocument(document: PDFDocumentProxy, zoom: number) {
 		const token = ++refreshToken;
+		const documentChanged = layoutDocument !== document;
+		layoutDocument = document;
 		layoutReadyToken = 0;
 		activeRender?.cancel();
 		activeRender = undefined;
 		renderedPages = new Set();
-		renderedThumbnails = new Set();
-		for (const canvas of window.document.querySelectorAll<HTMLCanvasElement>(
-			'.pdf-sheet canvas, .thumbnail-item canvas'
-		)) {
-			canvas.width = 0;
-			canvas.height = 0;
-		}
+		if (documentChanged) renderedThumbnails = new Set();
 		pages = Array.from({ length: document.numPages }, (_, index) => index + 1);
-		noteMarkers = [];
-		highlightRects = [];
 		if (pageItems.length !== document.numPages) setPageIds(pages.map(() => ++nextPageId));
+		const currentPageIds = new Set(pageItems.map(({ id }) => id));
+		renderedPageIds = new Set([...renderedPageIds].filter((id) => currentPageIds.has(id)));
 		selectedPage = Math.min(selectedPage, pages.length);
 		await tick();
 		if (token !== refreshToken) return;
@@ -282,10 +284,24 @@
 				const canvas = sheet?.querySelector<HTMLCanvasElement>('canvas');
 				const layer = sheet?.querySelector<HTMLDivElement>('.textLayer');
 				if (!canvas || !layer) continue;
-				canvas.width = 0;
-				canvas.height = 0;
 
 				const viewport = page.getViewport({ scale: zoom });
+				formRects = [
+					...formRects.filter((item) => item.field.page !== pageNumber),
+					...formFields
+						.filter((field) => field.page === pageNumber)
+						.map((field) => {
+							const [x1, y1] = viewport.convertToViewportPoint(field.rect[0], field.rect[1]);
+							const [x2, y2] = viewport.convertToViewportPoint(field.rect[2], field.rect[3]);
+							return {
+								field,
+								left: Math.min(x1, x2),
+								top: Math.min(y1, y2),
+								width: Math.abs(x2 - x1),
+								height: Math.abs(y2 - y1)
+							};
+						})
+				];
 				noteMarkers = [
 					...noteMarkers.filter((note) => note.page !== pageNumber),
 					...notes
@@ -322,7 +338,6 @@
 				];
 				canvas.style.width = `${viewport.width}px`;
 				canvas.style.height = `${viewport.height}px`;
-				layer.replaceChildren();
 				layer.style.width = `${viewport.width}px`;
 				layer.style.height = `${viewport.height}px`;
 				if (sheet) {
@@ -341,7 +356,7 @@
 					}
 				}
 			} catch {
-				if (token === refreshToken) error = `La page ${pageNumber} n’a pas pu être affichée.`;
+				if (token === refreshToken) notifyError(`La page ${pageNumber} n’a pas pu être affichée.`);
 			}
 		}
 		if (token !== refreshToken) return;
@@ -424,6 +439,10 @@
 			canvas.height = 0;
 		}
 		layer?.replaceChildren();
+		const pageId = pageItems[number - 1]?.id;
+		if (pageId !== undefined && renderedPageIds.has(pageId)) {
+			renderedPageIds = new Set([...renderedPageIds].filter((id) => id !== pageId));
+		}
 		void document
 			.getPage(number)
 			.then((page) => page.cleanup())
@@ -439,12 +458,15 @@
 			do {
 				renderAgain = false;
 				const token = refreshToken;
-				if (layoutReadyToken !== token || !documentStage || !fileSession.processedFile) break;
-				const document = fileSession.processedFile;
+				if (layoutReadyToken !== token || !documentStage || !getProcessedFile()) break;
+				const document = getProcessedFile();
 				const zoom = scale;
 				const wanted = visiblePageNumbers();
-				for (const number of renderedPages) {
-					if (wanted.includes(number)) continue;
+				const wantedSet = new Set(wanted);
+				for (const number of pages) {
+					if (wantedSet.has(number)) continue;
+					const canvas = pageSection(number)?.querySelector<HTMLCanvasElement>('.pdf-sheet canvas');
+					if (!canvas || (canvas.width === 0 && canvas.height === 0)) continue;
 					releasePageCanvas(number, document);
 					renderedPages.delete(number);
 				}
@@ -455,16 +477,17 @@
 					const sheet = pageSection(number)?.querySelector<HTMLElement>('.pdf-sheet');
 					const canvas = sheet?.querySelector<HTMLCanvasElement>('canvas');
 					const layer = sheet?.querySelector<HTMLDivElement>('.textLayer');
-					if (!canvas || !layer) continue;
+					if (!sheet || !canvas || !layer) continue;
 					try {
 						const page = await document.getPage(number);
 						if (token !== refreshToken) break;
 						const viewport = page.getViewport({ scale: zoom });
 						const pixelRatio = Math.min(window.devicePixelRatio || 1, 2, maxZoom / zoom);
-						canvas.width = Math.round(viewport.width * pixelRatio);
-						canvas.height = Math.round(viewport.height * pixelRatio);
+						const nextCanvas = canvas.cloneNode(false) as HTMLCanvasElement;
+						nextCanvas.width = Math.round(viewport.width * pixelRatio);
+						nextCanvas.height = Math.round(viewport.height * pixelRatio);
 						const task = (activeRender = page.render({
-							canvas,
+							canvas: nextCanvas,
 							viewport,
 							transform: [pixelRatio, 0, 0, pixelRatio, 0, 0]
 						}));
@@ -473,21 +496,30 @@
 						if (token !== refreshToken) break;
 						const textContent = await page.getTextContent();
 						if (token !== refreshToken) break;
-						layer.replaceChildren();
+						const nextTextLayer = window.document.createElement('div');
 						await new TextLayer({
 							textContentSource: textContent,
-							container: layer,
+							container: nextTextLayer,
 							viewport
 						}).render();
 						if (token !== refreshToken) break;
+						if (!canvas.isConnected || sheet.querySelector('canvas') !== canvas) continue;
+						canvas.replaceWith(nextCanvas);
+						layer.style.cssText = nextTextLayer.style.cssText;
+						const mainRotation = nextTextLayer.getAttribute('data-main-rotation');
+						if (mainRotation === null) layer.removeAttribute('data-main-rotation');
+						else layer.setAttribute('data-main-rotation', mainRotation);
+						layer.replaceChildren(...Array.from(nextTextLayer.childNodes));
 						renderedPages = new Set([...renderedPages, number]);
+						const pageId = pageItems[number - 1]?.id;
+						if (pageId !== undefined) renderedPageIds = new Set([...renderedPageIds, pageId]);
 					} catch (cause) {
 						activeRender = undefined;
 						if (
 							token === refreshToken &&
 							!(cause instanceof Error && cause.name === 'RenderingCancelledException')
 						)
-							error = `La page ${number} n’a pas pu être affichée.`;
+							notifyError(`La page ${number} n’a pas pu être affichée.`);
 					}
 				}
 				if (token !== refreshToken || renderAgain) continue;
@@ -503,13 +535,20 @@
 						const page = await document.getPage(number);
 						if (token !== refreshToken) break;
 						const viewport = page.getViewport({ scale: 0.2 });
-						canvas.width = Math.round(viewport.width);
-						canvas.height = Math.round(viewport.height);
-						const task = (activeRender = page.render({ canvas, viewport }));
+						const nextCanvas = canvas.cloneNode(false) as HTMLCanvasElement;
+						nextCanvas.width = Math.round(viewport.width);
+						nextCanvas.height = Math.round(viewport.height);
+						const task = (activeRender = page.render({ canvas: nextCanvas, viewport }));
 						await task.promise;
 						if (activeRender === task) activeRender = undefined;
 						if (token !== refreshToken) break;
-						if (!canvas.isConnected || !sidebarOpen) continue;
+						if (
+							!canvas.isConnected ||
+							!sidebarOpen ||
+							canvas.parentElement?.querySelector('canvas') !== canvas
+						)
+							continue;
+						canvas.replaceWith(nextCanvas);
 						renderedThumbnails = new Set([...renderedThumbnails, number]);
 					} catch (cause) {
 						activeRender = undefined;
@@ -517,7 +556,7 @@
 							token === refreshToken &&
 							!(cause instanceof Error && cause.name === 'RenderingCancelledException')
 						)
-							error = `La miniature ${number} n’a pas pu être affichée.`;
+							notifyError(`La miniature ${number} n’a pas pu être affichée.`);
 					}
 				}
 			} while (renderAgain);
@@ -563,7 +602,7 @@
 			}
 			animatingReorder = false;
 		}
-		const previousPreview = fileSession.processedFile;
+		const previousPreview = getProcessedFile();
 		refreshToken++;
 		activeRender?.cancel();
 		try {
@@ -572,24 +611,131 @@
 			// The new preview remains usable if the previous renderer already stopped.
 		}
 		fileSession.updatedFile = document;
+		formFields = listFormFields(document);
 		notes = listNotes(document);
 		highlights = listHighlights(document);
 		selectionToken++;
 		selectedText = null;
-		fileSession.processedFile = preview;
+		setProcessedFile(preview);
 		dirty = true;
 	};
 
-	const runAction = async (action: () => Promise<void>, success: string) => {
+	const startFieldDrag = (event: PointerEvent, field: PDFFormField, left: number, top: number) => {
+		if (busy || event.button !== 0) return;
+		event.preventDefault();
+		(event.currentTarget as HTMLButtonElement).setPointerCapture(event.pointerId);
+		fieldDrag = {
+			field,
+			pointerId: event.pointerId,
+			startX: event.clientX,
+			startY: event.clientY,
+			startLeft: left,
+			startTop: top,
+			moved: false
+		};
+	};
+	const previewFieldDrag = (event: PointerEvent) => {
+		const drag = fieldDrag;
+		if (!drag || event.pointerId !== drag.pointerId) return;
+		const deltaX = event.clientX - drag.startX;
+		const deltaY = event.clientY - drag.startY;
+		if (!drag.moved && Math.hypot(deltaX, deltaY) < 4) return;
+		drag.moved = true;
+		formRects = formRects.map((item) =>
+			item.field.name === drag.field.name &&
+			item.field.page === drag.field.page &&
+			item.field.widgetIndex === drag.field.widgetIndex
+				? { ...item, left: drag.startLeft + deltaX, top: drag.startTop + deltaY }
+				: item
+		);
+	};
+	const resetFieldDragPreview = (drag: NonNullable<typeof fieldDrag>) => {
+		formRects = formRects.map((item) =>
+			item.field.name === drag.field.name &&
+			item.field.page === drag.field.page &&
+			item.field.widgetIndex === drag.field.widgetIndex
+				? { ...item, left: drag.startLeft, top: drag.startTop }
+				: item
+		);
+	};
+	const finishFieldDrag = async (event: PointerEvent) => {
+		const drag = fieldDrag;
+		if (!drag || event.pointerId !== drag.pointerId) return;
+		fieldDrag = null;
+		if (!drag.moved) return;
+		suppressFieldClick = true;
+		window.setTimeout(() => (suppressFieldClick = false), 0);
+		try {
+			const sheet = pageSection(drag.field.page)?.querySelector<HTMLElement>('.pdf-sheet');
+			const bounds = sheet?.getBoundingClientRect();
+			if (!bounds || bounds.width <= 0) throw new Error('La page du champ est indisponible.');
+			const page = await getProcessedFile().getPage(drag.field.page);
+			const baseViewport = page.getViewport({ scale: 1 });
+			const viewport = page.getViewport({ scale: bounds.width / baseViewport.width });
+			const [startX, startY] = viewport.convertToPdfPoint(
+				drag.startX - bounds.left,
+				drag.startY - bounds.top
+			);
+			const [endX, endY] = viewport.convertToPdfPoint(
+				event.clientX - bounds.left,
+				event.clientY - bounds.top
+			);
+			const moved = await contentTools.move(drag.field, endX - startX, endY - startY);
+			if (!moved) resetFieldDragPreview(drag);
+		} catch {
+			resetFieldDragPreview(drag);
+		}
+	};
+	const cancelFieldDrag = (event: PointerEvent) => {
+		const drag = fieldDrag;
+		if (!drag || event.pointerId !== drag.pointerId) return;
+		fieldDrag = null;
+		resetFieldDragPreview(drag);
+	};
+	const moveFieldWithKeyboard = async (
+		event: KeyboardEvent,
+		field: PDFFormField,
+		left: number,
+		top: number,
+		width: number,
+		height: number
+	) => {
+		if (!event.altKey || !event.key.startsWith('Arrow') || busy) return;
+		event.preventDefault();
+		const sheet = pageSection(field.page)?.querySelector<HTMLElement>('.pdf-sheet');
+		const bounds = sheet?.getBoundingClientRect();
+		if (!bounds || bounds.width <= 0) return;
+		const page = await getProcessedFile().getPage(field.page);
+		const baseViewport = page.getViewport({ scale: 1 });
+		const viewport = page.getViewport({ scale: bounds.width / baseViewport.width });
+		const centerX = left + width / 2;
+		const centerY = top + height / 2;
+		const step = event.shiftKey ? 24 : 8;
+		const screenDeltas: Record<string, [number, number]> = {
+			ArrowLeft: [-step, 0],
+			ArrowRight: [step, 0],
+			ArrowUp: [0, -step],
+			ArrowDown: [0, step]
+		};
+		const screenDelta = screenDeltas[event.key];
+		if (!screenDelta) return;
+		const [startX, startY] = viewport.convertToPdfPoint(centerX, centerY);
+		const [endX, endY] = viewport.convertToPdfPoint(
+			centerX + screenDelta[0],
+			centerY + screenDelta[1]
+		);
+		await contentTools.move(field, endX - startX, endY - startY);
+	};
+
+	const runAction = async (action: () => Promise<void>, success?: string) => {
 		if (busy) return;
 		busy = true;
-		error = '';
-		status = '';
+		if (success) toast.dismiss(feedbackId);
 		try {
 			await action();
-			status = success;
+			if (success) notifySuccess(success);
 		} catch {
-			error = 'L’opération a échoué. Votre document reste ouvert.';
+			notifyError('L’opération a échoué. Votre document reste ouvert.');
 		} finally {
 			busy = false;
 		}
@@ -607,7 +753,7 @@
 	const remove = async (pageNumber: number) => {
 		if (busy) return;
 		if (pages.length <= 1) {
-			error = 'Un PDF doit conserver au moins une page.';
+			notifyError('Un PDF doit conserver au moins une page.');
 			return;
 		}
 		pageToDelete = pageNumber;
@@ -650,6 +796,12 @@
 	};
 	const move = (pageNumber: number, direction: -1 | 1) =>
 		reorder(pageNumber, pageNumber + direction);
+	const rotate = (pageNumber: number) =>
+		void runAction(async () => {
+			const next = await rotatePage(fileSession.updatedFile, pageNumber);
+			await applyDocument(next);
+			selectedPage = pageNumber;
+		}, 'Page tournée. Pensez à exporter le PDF.');
 
 	const startPageDrag = (event: DragEvent, pageNumber: number) => {
 		if (busy) {
@@ -701,7 +853,7 @@
 	const savePlain = () => {
 		exportDialog.close();
 		void runAction(async () => {
-			await savePDF();
+			await savePDF(fileSession.updatedFile, fileSession.fileName);
 			dirty = false;
 		}, 'PDF exporté dans vos téléchargements.');
 	};
@@ -715,12 +867,11 @@
 		}
 		busy = true;
 		exportError = '';
-		error = '';
-		status = '';
+		toast.dismiss(feedbackId);
 		try {
-			await savePDF(exportPassword);
+			await savePDF(fileSession.updatedFile, fileSession.fileName, exportPassword);
 			dirty = false;
-			status = 'PDF protégé exporté dans vos téléchargements.';
+			notifySuccess('PDF protégé exporté dans vos téléchargements.');
 			exportDialog.close();
 		} catch {
 			exportError = 'Le PDF protégé n’a pas pu être créé. Réessayez.';
@@ -744,32 +895,32 @@
 		if (busy) return;
 		toolsOpen = false;
 		busy = true;
-		error = '';
-		status = '';
-		ocrProgress = 'Analyse du document…';
+		notifyOcrProgress('Analyse du document…');
 		try {
 			const result = await applyOcrToPdf(
 				fileSession.updatedFile,
-				fileSession.processedFile,
+				getProcessedFile(),
 				ocrLanguage,
 				(progress) => {
-					ocrProgress = describeOcrProgress(progress);
+					notifyOcrProgress(describeOcrProgress(progress));
 				}
 			);
 			if (result.wordsAdded) {
 				await applyDocument(result.document);
-				status = `Texte ajouté à ${result.pagesUpdated} ${result.pagesUpdated === 1 ? 'page' : 'pages'}. Exportez le PDF pour le conserver.`;
+				notifySuccess(
+					`Texte ajouté à ${result.pagesUpdated} ${result.pagesUpdated === 1 ? 'page' : 'pages'}. Exportez le PDF pour le conserver.`
+				);
 			} else if (result.pagesProcessed) {
-				status = 'Aucun texte reconnu sur les pages sans texte.';
+				notifySuccess('Aucun texte reconnu sur les pages sans texte.');
 			} else {
-				status = 'Toutes les pages contiennent déjà du texte sélectionnable.';
+				notifySuccess('Toutes les pages contiennent déjà du texte sélectionnable.');
 			}
 		} catch (cause) {
 			console.error('OCR failed:', cause);
-			error =
-				'L’OCR a échoué. Vérifiez votre connexion lors du premier téléchargement du modèle de langue, puis réessayez.';
+			notifyError(
+				'L’OCR a échoué. Vérifiez votre connexion lors du premier téléchargement du modèle de langue, puis réessayez.'
+			);
 		} finally {
-			ocrProgress = '';
 			busy = false;
 		}
 	};
@@ -779,14 +930,14 @@
 		extractedText = null;
 		extractionError = '';
 		extractionFeedback = '';
-		extractionProgress = `Extraction de la page 1 sur ${fileSession.processedFile.numPages}…`;
+		extractionProgress = `Extraction de la page 1 sur ${getProcessedFile().numPages}…`;
 		extractionController = new AbortController();
 		extractionRunning = true;
 		busy = true;
 		textDialog.showModal();
 		try {
 			extractedText = await extractPDFText(
-				fileSession.processedFile,
+				getProcessedFile(),
 				(page, total) => {
 					extractionProgress = `Extraction de la page ${page} sur ${total}…`;
 				},
@@ -818,12 +969,7 @@
 	const downloadExtractedText = () => {
 		if (!extractedText?.text) return;
 		const blob = new Blob([extractedText.text], { type: 'text/plain;charset=utf-8' });
-		const link = window.document.createElement('a');
-		link.href = URL.createObjectURL(blob);
-		link.download = `${fileSession.fileName.replace(/\.pdf$/i, '')}.txt`;
-		link.click();
-		link.remove();
-		setTimeout(() => URL.revokeObjectURL(link.href), 7000);
+		downloadBlob(blob, `${fileSession.fileName.replace(/\.pdf$/i, '')}.txt`);
 		extractionFeedback = 'Texte téléchargé au format .txt.';
 	};
 	const back = () => {
@@ -843,28 +989,44 @@
 		x: (touches[0].clientX + touches[1].clientX) / 2,
 		y: (touches[0].clientY + touches[1].clientY) / 2
 	});
-	const zoomAnchor = (touches: TouchList): ZoomAnchor | null => {
-		const center = touchCenter(touches);
+	const zoomAnchorAt = (clientX: number, clientY: number): ZoomAnchor | null => {
 		const sheets = Array.from(documentStage.querySelectorAll<HTMLElement>('.pdf-sheet'));
 		const sheet =
 			sheets.find((item) => {
 				const bounds = item.getBoundingClientRect();
 				return (
-					center.x >= bounds.left &&
-					center.x <= bounds.right &&
-					center.y >= bounds.top &&
-					center.y <= bounds.bottom
+					clientX >= bounds.left &&
+					clientX <= bounds.right &&
+					clientY >= bounds.top &&
+					clientY <= bounds.bottom
 				);
 			}) || sheets[Math.max(0, selectedPage - 1)];
 		if (!sheet) return null;
 		const bounds = sheet.getBoundingClientRect();
 		return {
 			page: Number(sheet.closest<HTMLElement>('.page-section')?.dataset.page || 1),
-			x: Math.max(0, Math.min(1, (center.x - bounds.left) / bounds.width)),
-			y: Math.max(0, Math.min(1, (center.y - bounds.top) / bounds.height)),
-			clientX: center.x,
-			clientY: center.y
+			x: Math.max(0, Math.min(1, (clientX - bounds.left) / bounds.width)),
+			y: Math.max(0, Math.min(1, (clientY - bounds.top) / bounds.height)),
+			clientX,
+			clientY
 		};
+	};
+	const zoomAnchor = (touches: TouchList): ZoomAnchor | null => {
+		const center = touchCenter(touches);
+		return zoomAnchorAt(center.x, center.y);
+	};
+	const zoomWithWheel = (event: WheelEvent) => {
+		if ((!event.ctrlKey && !event.metaKey) || event.deltaY === 0 || busy) return;
+		event.preventDefault();
+		const anchor = zoomAnchorAt(event.clientX, event.clientY);
+		if (!anchor) return;
+		const nextScale = Math.max(
+			minZoom,
+			Math.min(maxZoom, Math.round((scale + (event.deltaY < 0 ? 0.1 : -0.1)) * 100) / 100)
+		);
+		if (nextScale === scale) return;
+		pendingZoomAnchor = anchor;
+		scale = nextScale;
 	};
 	const keepZoomAnchor = (anchor: ZoomAnchor) => {
 		const sheet = pageSection(anchor.page)?.querySelector<HTMLElement>('.pdf-sheet');
@@ -925,31 +1087,46 @@
 			node.removeEventListener('touchmove', movePinch);
 		};
 	};
-	const clearTextSelection = () => {
+	const resetHighlightSelection = () => {
 		selectionToken++;
 		selectedText = null;
 		colorWheelOpen = false;
+	};
+	const clearTextSelection = () => {
+		resetHighlightSelection();
 		window.getSelection()?.removeAllRanges();
 	};
 	const captureTextSelection = async () => {
-		if (busy || noteMode) return;
+		const token = ++selectionToken;
 		const selection = window.getSelection();
 		if (
 			!selection ||
 			selection.isCollapsed ||
 			!selection.toString().trim() ||
 			!selection.rangeCount
-		)
+		) {
+			resetHighlightSelection();
 			return;
+		}
+		if (busy || noteMode || placingContent) return;
 		const sheetFor = (node: Node | null) =>
 			(node instanceof Element ? node : node?.parentElement)?.closest<HTMLElement>('.pdf-sheet');
 		const sheet = sheetFor(selection.anchorNode);
-		if (!sheet || sheet !== sheetFor(selection.focusNode)) return;
+		if (!sheet || sheet !== sheetFor(selection.focusNode)) {
+			resetHighlightSelection();
+			return;
+		}
 		const layer = sheet.querySelector('.textLayer');
-		if (!layer?.contains(selection.anchorNode) || !layer.contains(selection.focusNode)) return;
+		if (!layer?.contains(selection.anchorNode) || !layer.contains(selection.focusNode)) {
+			resetHighlightSelection();
+			return;
+		}
 		const section = sheet.closest<HTMLElement>('.page-section');
 		const pageNumber = Number(section?.dataset.page || 0);
-		if (!pageNumber) return;
+		if (!pageNumber) {
+			resetHighlightSelection();
+			return;
+		}
 		const sheetRect = sheet.getBoundingClientRect();
 		const rectangles = Array.from(selection.getRangeAt(0).getClientRects())
 			.filter((rect) => rect.width > 2 && rect.height > 2)
@@ -960,10 +1137,12 @@
 				bottom: Math.min(sheetRect.height, rect.bottom - sheetRect.top)
 			}))
 			.filter((rect) => rect.right > rect.left && rect.bottom > rect.top);
-		if (!rectangles.length) return;
+		if (!rectangles.length) {
+			resetHighlightSelection();
+			return;
+		}
 		const text = selection.toString().trim();
-		const token = ++selectionToken;
-		const pdfPage = await fileSession.processedFile.getPage(pageNumber);
+		const pdfPage = await getProcessedFile().getPage(pageNumber);
 		if (token !== selectionToken) return;
 		const viewport = pdfPage.getViewport({ scale });
 		const quads = rectangles.map(({ left, top, right, bottom }) => {
@@ -990,7 +1169,7 @@
 			await applyDocument(next);
 			lastHighlightId = added?.id || null;
 			clearTextSelection();
-		}, 'Texte surligné. Pensez à exporter le PDF.');
+		});
 	};
 	const undoHighlight = () => {
 		if (!lastHighlightId || busy) return;
@@ -998,8 +1177,36 @@
 		void runAction(async () => {
 			await applyDocument(await removeHighlight(fileSession.updatedFile, id));
 			lastHighlightId = null;
-		}, 'Surlignage annulé.');
+		});
 	};
+	$effect(() => {
+		if (!mounted) return;
+		if (noteMode) {
+			untrack(() => {
+				toast.info('Cliquez ou touchez une page pour placer la note.', {
+					id: notePlacementId,
+					duration: Infinity,
+					closeButton: false,
+					dismissible: false,
+					action: {
+						label: 'Annuler',
+						onClick: () => {
+							noteMode = false;
+							noteModeButton.focus();
+						}
+					}
+				});
+			});
+		} else {
+			toast.dismiss(notePlacementId);
+		}
+	});
+	$effect(() => {
+		if (placingContent) {
+			noteMode = false;
+			untrack(clearTextSelection);
+		}
+	});
 	const openNote = (note: PDFNote, trigger: HTMLElement) => {
 		noteTrigger = trigger;
 		editingNote = note;
@@ -1015,7 +1222,7 @@
 		trigger?: HTMLElement
 	) => {
 		if (busy) return;
-		const page = await fileSession.processedFile.getPage(pageNumber);
+		const page = await getProcessedFile().getPage(pageNumber);
 		const viewport = page.getViewport({ scale });
 		const [x, topY] = viewport.convertToPdfPoint(
 			Math.max(4, Math.min(left ?? viewport.width - 48, viewport.width - 32)),
@@ -1082,7 +1289,7 @@
 		];
 	});
 	$effect(() => {
-		const document = fileSession.processedFile;
+		const document = getProcessedFile();
 		const zoom = scale;
 		if (mounted && document) untrack(() => void renderDocument(document, zoom));
 	});
@@ -1109,7 +1316,23 @@
 		}
 		if (event.key === 'Escape' && selectedText) clearTextSelection();
 	}}
+	onpointermove={previewFieldDrag}
+	onpointerup={(event) => void finishFieldDrag(event)}
+	onpointercancel={cancelFieldDrag}
 	onpointerdown={(event) => {
+		if (
+			selectedText &&
+			event.target instanceof Element &&
+			event.target.closest('.highlight-toolbar')
+		) {
+			const control = event.target.closest<HTMLElement>('button, [role="slider"]');
+			if (control) {
+				// Keep the PDF selection while retaining keyboard access to the color controls.
+				event.preventDefault();
+				control.focus({ preventScroll: true });
+			}
+			return;
+		}
 		if (
 			selectedText &&
 			event.target instanceof Element &&
@@ -1122,171 +1345,195 @@
 
 <svelte:head><title>{fileSession.fileName || 'Document'} — Inscribe</title></svelte:head>
 
-<div
-	class="editor-shell h-[100vh] min-h-[480px] flex flex-col overflow-hidden [background:#eaece8]"
->
+<div class="editor-shell h-screen min-h-120 flex flex-col overflow-hidden bg-[#eaece8]">
 	<header
-		class="editor-header h-[72px] flex-none flex items-center justify-between gap-[20px] p-[0_22px] [border-bottom:1px_solid_var(--line)] [background:var(--paper)] max-[760px]:h-[64px] max-[760px]:p-[0_12px] max-[760px]:gap-[8px] max-[520px]:[&_.brand-mark]:hidden"
+		class="editor-header h-18 flex-none flex items-center justify-between gap-5 p-[0_22px] border-b border-b-(--line) bg-(--paper) max-[760px]:h-16 max-[760px]:p-[0_12px] max-[760px]:gap-2"
 	>
-		<div class="editor-identity flex items-center min-w-0 gap-[13px] max-[760px]:gap-[7px]">
-			<button
-				class="icon-button back-button [border:1px_solid_transparent] bg-transparent [color:var(--ink)] rounded-[7px] min-w-[38px] h-[38px] inline-flex items-center justify-center gap-[8px] [&:hover]:[background:#eef1eb] max-[520px]:min-w-[32px]"
+		<div class="editor-identity flex items-center min-w-0 gap-3.25 max-[760px]:gap-1.75">
+			<ActionButton
+				class="icon-button back-button border border-transparent bg-transparent text-(--ink) rounded-[7px] min-w-9.5 h-9.5 inline-flex items-center justify-center gap-2 hover:bg-[#eef1eb] max-[520px]:min-w-8 cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 				type="button"
 				onclick={back}
 				disabled={busy}
 				aria-label="Retour à l’accueil"
-				title="Retour à l’accueil"><ArrowLeft size={19} /></button
+				title="Retour à l’accueil"><ArrowLeft size={19} /></ActionButton
 			>
 			<span
-				class="brand-mark compact inline-flex justify-center items-center w-[38px] h-[38px] rounded-[10px] [background:var(--accent)] text-white text-[27px] font-extrabold leading-[1] tracking-[-0.1em] pr-[3px] [&_span]:[color:#dfb394] [&.compact]:w-[32px] [&.compact]:h-[32px] [&.compact]:text-[23px] [&.compact]:rounded-[8px] [&.compact]:flex-none"
-				>i<span>.</span></span
+				class="brand-mark compact inline-flex justify-center items-center bg-(--accent) text-white font-extrabold leading-none -tracking-widest pr-0.75 w-8 h-8 text-[23px] rounded-lg flex-none max-[520px]:hidden"
+				>i<span class="text-[#dfb394]">.</span></span
 			>
-			<div
-				class="document-identity flex flex-col min-w-0 gap-[3px] [&_strong]:max-w-[min(32vw,_420px)] [&_strong]:overflow-hidden [&_strong]:whitespace-nowrap [&_strong]:text-ellipsis [&_strong]:text-[14px] [&_strong]:font-extrabold [&_small]:[color:var(--muted-ink)] [&_small]:text-[11px] max-[760px]:[&_strong]:max-w-[29vw] max-[760px]:[&_strong]:text-[12px] max-[760px]:[&_small]:text-[10px] max-[520px]:[&_strong]:max-w-[32vw]"
-			>
-				<strong title={fileSession.fileName}>{fileSession.fileName || 'Document sans titre'}</strong
-				><small>{dirty ? 'Modifications non exportées' : 'Document ouvert'}</small>
+			<div class="document-identity flex flex-col min-w-0 gap-0.75">
+				<strong
+					class="max-w-[min(32vw,420px)] overflow-hidden whitespace-nowrap text-ellipsis text-[14px] font-extrabold max-[760px]:max-w-[29vw] max-[760px]:text-[12px] max-[520px]:max-w-[32vw]"
+					title={fileSession.fileName}>{fileSession.fileName || 'Document sans titre'}</strong
+				><small class="text-(--muted-ink) text-[11px] max-[760px]:text-[10px]"
+					>{dirty ? 'Modifications non exportées' : 'Document ouvert'}</small
+				>
 			</div>
 		</div>
-		<div class="editor-actions flex items-center gap-[8px] flex-none max-[760px]:gap-[3px]">
-			<button
-				bind:this={noteModeButton}
-				class="toolbar-button note-mode-button [border:1px_solid_transparent] bg-transparent [color:var(--ink)] rounded-[7px] min-w-[38px] h-[38px] inline-flex items-center justify-center gap-[8px] [&:hover]:[background:#eef1eb] [border-color:var(--line)] p-[0_12px] text-[12px] font-extrabold [&.active]:[background:#fbece5] [&.active]:[border-color:#dcae98] [&.active]:[color:#8d3e27] max-[760px]:[&_span]:hidden max-[760px]:p-0 max-[760px]:min-w-[38px]"
-				class:active={noteMode}
+		<div class="editor-actions flex items-center gap-2 flex-none max-[760px]:gap-0.75">
+			<ActionButton
+				bind:ref={noteModeButton}
+				class="toolbar-button note-mode-button border {noteMode
+					? 'bg-[#fbece5] text-[#8d3e27]'
+					: 'bg-transparent text-(--ink)'} rounded-[7px] min-w-9.5 h-9.5 inline-flex items-center justify-center gap-2 hover:bg-[#eef1eb] {noteMode
+					? 'border-[#dcae98]'
+					: 'border-(--line)'} p-[0_12px] text-[12px] font-extrabold max-[760px]:p-0 max-[760px]:min-w-9.5 cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 				type="button"
-				onclick={() => (noteMode = !noteMode)}
+				onclick={() => {
+					placingContent = null;
+					noteMode = !noteMode;
+				}}
 				disabled={busy}
 				aria-pressed={noteMode}
 				aria-label="Ajouter une note sur une page"
 				title="Ajouter une note sur une page"
-				><MessageSquarePlus size={18} /><span>Ajouter une note</span></button
+				><MessageSquarePlus size={18} /><span class="max-[760px]:hidden">Ajouter une note</span
+				></ActionButton
 			>
 			<input
 				bind:this={mergeInput}
 				type="file"
 				accept=".pdf,application/pdf"
-				class="visually-hidden absolute w-[1px] h-[1px] p-0 m-[-1px] overflow-hidden [clip:rect(0,_0,_0,_0)] whitespace-nowrap border-0"
+				class="sr-only cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 				onchange={merge}
 				aria-label="Choisir un PDF à ajouter"
 			/>
-			<button
-				class="toolbar-button merge-button [border:1px_solid_transparent] bg-transparent [color:var(--ink)] rounded-[7px] min-w-[38px] h-[38px] inline-flex items-center justify-center gap-[8px] [&:hover]:[background:#eef1eb] [border-color:var(--line)] p-[0_12px] text-[12px] font-extrabold max-[760px]:[&_span]:hidden max-[760px]:p-0 max-[760px]:min-w-[38px]"
+			<ActionButton
+				class="toolbar-button merge-button border bg-transparent text-(--ink) rounded-[7px] min-w-9.5 h-9.5 inline-flex items-center justify-center gap-2 hover:bg-[#eef1eb] border-(--line) p-[0_12px] text-[12px] font-extrabold max-[760px]:p-0 max-[760px]:min-w-9.5 cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 				type="button"
 				onclick={() => mergeInput.click()}
 				disabled={busy}
-				aria-label="Ajouter un PDF"><FilePlus2 size={18} /> <span>Ajouter un PDF</span></button
+				aria-label="Ajouter un PDF"
+				><FilePlus2 size={18} />
+				<span class="max-[760px]:hidden">Ajouter un PDF</span></ActionButton
 			>
-			<button
-				bind:this={infoButton}
-				class="icon-button info-button [border:1px_solid_transparent] bg-transparent [color:var(--ink)] rounded-[7px] min-w-[38px] h-[38px] inline-flex items-center justify-center gap-[8px] [&:hover]:[background:#eef1eb] [border-color:var(--line)]"
+			<ActionButton
+				bind:ref={infoButton}
+				class="icon-button info-button border bg-transparent text-(--ink) rounded-[7px] min-w-9.5 h-9.5 inline-flex items-center justify-center gap-2 hover:bg-[#eef1eb] border-(--line) cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 				type="button"
 				onclick={openInfo}
 				aria-label="Informations sur le PDF"
 				aria-haspopup="dialog"
-				title="Informations sur le PDF"><Info size={20} strokeWidth={1.8} /></button
+				title="Informations sur le PDF"><Info size={20} strokeWidth={1.8} /></ActionButton
 			>
 			<div class="tools-wrap relative">
-				<button
-					bind:this={toolsButton}
-					class="icon-button tools-button [border:1px_solid_transparent] bg-transparent [color:var(--ink)] rounded-[7px] min-w-[38px] h-[38px] inline-flex items-center justify-center gap-[8px] [&:hover]:[background:#eef1eb]"
+				<ActionButton
+					bind:ref={toolsButton}
+					class="icon-button tools-button border border-transparent bg-transparent text-(--ink) rounded-[7px] min-w-9.5 h-9.5 inline-flex items-center justify-center gap-2 hover:bg-[#eef1eb] cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 					type="button"
 					onclick={() => (toolsOpen = !toolsOpen)}
 					aria-label="Outils texte : OCR et extraction"
 					aria-haspopup="true"
 					aria-expanded={toolsOpen}
-					title="Outils texte : OCR et extraction"><ScanText size={20} strokeWidth={1.9} /></button
+					title="Outils texte : OCR et extraction"
+					><ScanText size={20} strokeWidth={1.9} /></ActionButton
 				>{#if toolsOpen}<div
-						class="tools-popover absolute right-[0] top-[44px] z-[20] w-[min(300px,_calc(100vw_-_24px))] p-[18px] [background:var(--paper)] [border:1px_solid_var(--line)] rounded-[8px] [box-shadow:0_12px_30px_#24342822] [&_strong]:flex [&_strong]:items-center [&_strong]:gap-[8px] [&_strong]:text-[13px] [&_p]:m-[10px_0_16px] [&_p]:[color:var(--muted-ink)] [&_p]:text-[12px] [&_p]:leading-[1.55] [&_label]:block [&_label]:mb-[7px] [&_label]:text-[11px] [&_label]:font-extrabold [&_select]:w-full [&_select]:min-h-[38px] [&_select]:p-[0_9px] [&_select]:[border:1px_solid_var(--line)] [&_select]:rounded-[6px] [&_select]:bg-white [&_select]:[color:var(--ink)] [&_select]:text-[12px] [&_small]:block [&_small]:mt-[11px] [&_small]:[color:var(--muted-ink)] [&_small]:text-[10px] [&_small]:leading-[1.5] [&_button.ocr-start]:w-full [&_button.ocr-start]:flex [&_button.ocr-start]:justify-center [&_button.ocr-start]:p-[10px] [&_button.ocr-start]:mt-[16px] [&_button.ocr-start]:[background:var(--accent)] [&_button.ocr-start]:text-white [&_button.ocr-start]:border-0 [&_button.ocr-start]:rounded-[5px] [&_button.ocr-start]:text-[12px] [&_button.ocr-start]:font-extrabold [&_button.ocr-start:hover]:[background:var(--accent-dark)]"
+						class="tools-popover absolute right-0 top-11 z-20 w-[min(300px,calc(100vw-24px))] p-4.5 bg-(--paper) border border-(--line) rounded-lg shadow-[0_12px_30px_#24342822]"
 						role="group"
 						aria-label="Outils texte"
 					>
-						<strong><ScanText size={17} /> Reconnaître le texte</strong>
-						<p>Ajoute du texte sélectionnable aux pages qui n’en contiennent pas.</p>
-						<label for="ocr-language">Langue du document</label>
-						<select id="ocr-language" bind:value={ocrLanguage} disabled={busy}>
+						<strong class="flex items-center gap-2 text-[13px]"
+							><ScanText size={17} /> Reconnaître le texte</strong
+						>
+						<p class="m-[10px_0_16px] text-[12px] leading-[1.55] text-(--muted-ink)">
+							Ajoute du texte sélectionnable aux pages qui n’en contiennent pas.
+						</p>
+						<label class="block mb-1.75 text-[11px] font-extrabold" for="ocr-language"
+							>Langue du document</label
+						>
+						<select
+							class="w-full min-h-9.5 p-[0_9px] border border-(--line) rounded-md bg-white text-(--ink) text-[12px] cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
+							id="ocr-language"
+							bind:value={ocrLanguage}
+							disabled={busy}
+						>
 							<option value="fra">Français</option>
 							<option value="eng">Anglais</option>
 							<option value="eng+fra">Français et anglais</option>
 						</select>
-						<small
+						<small class="block mt-2.75 text-(--muted-ink) text-[10px] leading-normal"
 							>Le modèle de langue est téléchargé au premier lancement. Le PDF reste sur cet
 							appareil.</small
 						>
-						<button class="ocr-start" type="button" onclick={ocr} disabled={busy}
-							>Lancer l’OCR</button
+						<button
+							class="w-full flex justify-center p-2.5 mt-4 bg-(--accent) text-white border-0 rounded-[5px] text-[12px] font-extrabold hover:bg-(--accent-dark) cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
+							type="button"
+							onclick={ocr}
+							disabled={busy}>Lancer l’OCR</button
 						>
-						<div class="mt-4 border-t [border-color:var(--line)] pt-4">
-							<strong><FileText size={17} /> Extraire le texte</strong>
+						<div class="mt-4 border-t border-(--line) pt-4">
+							<strong class="flex items-center gap-2 text-[13px]"
+								><FileText size={17} /> Extraire le texte</strong
+							>
 							<p>Récupère le texte de toutes les pages pour le copier ou le télécharger.</p>
 							<button
 								type="button"
 								onclick={() => void openTextExtraction()}
 								disabled={busy}
-								class="flex min-h-10 w-full items-center justify-center gap-2 rounded-[6px] border [border-color:var(--line)] bg-white text-[12px] font-extrabold [color:var(--ink)] hover:[background:#eef1eb] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:[outline-color:var(--ring)]"
+								class="flex min-h-10 w-full items-center justify-center gap-2 rounded-md border border-(--line) bg-white text-[12px] font-extrabold text-(--ink) hover:bg-[#eef1eb] focus-visible:outline-(--ring) cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 motion-reduce:transition-none motion-reduce:animate-none"
 								><FileText size={16} /> Extraire tout le texte</button
 							>
 						</div>
 					</div>{/if}
 			</div>
-			<button
-				bind:this={exportButton}
-				class="export-button min-h-[44px] inline-flex items-center justify-center gap-[10px] p-[0_19px] border-0 rounded-[7px] [background:var(--accent)] text-white text-[13px] font-extrabold [transition:background_0.15s,_transform_0.15s] [&:hover]:[background:var(--accent-dark)] min-h-[39px] text-[12px] max-[760px]:p-[0_11px] max-[760px]:[&_span]:hidden"
+			<ActionButton
+				bind:ref={exportButton}
+				class="export-button inline-flex items-center justify-center gap-2.5 p-[0_19px] border-0 rounded-[7px] bg-(--accent) text-white font-extrabold transition-[background,transform] duration-150 ease-linear hover:bg-(--accent-dark) min-h-9.75 text-[12px] max-[760px]:p-[0_11px] cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 				type="button"
 				onclick={save}
 				disabled={busy}
 				aria-haspopup="dialog"
-				aria-label="Exporter le PDF"><Download size={18} /><span>Exporter le PDF</span></button
+				aria-label="Exporter le PDF"
+				><Download size={18} /><span class="max-[760px]:hidden">Exporter le PDF</span></ActionButton
 			>
 		</div>
 	</header>
 	<dialog
 		bind:this={textDialog}
-		class="w-[min(680px,_calc(100vw_-_32px))] max-h-[calc(100vh_-_32px)] m-auto p-0 flex-col [&[open]]:flex [border:1px_solid_var(--line)] rounded-[12px] [background:var(--paper)] [color:var(--ink)] [box-shadow:0_24px_70px_#17241c40] [&::backdrop]:[background:#17241c99]"
+		class="w-[min(680px,calc(100vw-32px))] max-h-[calc(100vh-32px)] m-auto p-0 flex-col [[open]]:flex border border-(--line) rounded-xl bg-(--paper) text-(--ink) shadow-[0_24px_70px_#17241c40] backdrop:bg-[#17241c99]"
 		aria-labelledby="text-dialog-title"
 		onclose={() => {
 			extractionController?.abort();
 			toolsButton?.focus();
 		}}
 	>
-		<div
-			class="flex items-center justify-between gap-4 border-b [border-color:var(--line)] px-6 py-5"
-		>
+		<div class="flex items-center justify-between gap-4 border-b border-(--line) px-6 py-5">
 			<div class="flex items-center gap-3">
-				<span
-					class="grid size-10 place-items-center rounded-[9px] [background:#e4eee6] [color:var(--accent)]"
+				<span class="grid size-10 place-items-center rounded-[9px] bg-[#e4eee6] text-(--accent)"
 					><FileText size={20} /></span
 				>
 				<div>
-					<span class="text-[10px] font-extrabold tracking-[0.14em] [color:var(--accent)]"
+					<span class="text-[10px] font-extrabold tracking-[0.14em] text-(--accent)"
 						>OUTILS TEXTE</span
 					>
 					<h2 id="text-dialog-title" class="mt-1 text-[17px] font-extrabold">Texte du document</h2>
 				</div>
 			</div>
-			<button
+			<ActionButton
 				type="button"
 				onclick={() => textDialog.close()}
 				aria-label="Fermer le texte extrait"
-				class="grid size-10 place-items-center rounded-[7px] hover:[background:#eef1eb] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:[outline-color:var(--ring)]"
-				><X size={18} /></button
+				class="grid size-10 place-items-center rounded-[7px] hover:bg-[#eef1eb] focus-visible:outline-(--ring) cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 motion-reduce:transition-none motion-reduce:animate-none"
+				><X size={18} /></ActionButton
 			>
 		</div>
 		<div class="min-h-0 flex-1 overflow-y-auto px-6 py-5">
 			{#if extractionRunning}
-				<p role="status" class="text-[13px] font-bold [color:var(--accent)]">
+				<p role="status" class="text-[13px] font-bold text-(--accent)">
 					{extractionProgress}
 				</p>
 			{:else if extractionError}
-				<p role="alert" class="text-[13px] font-bold [color:#a4492e]">{extractionError}</p>
+				<p role="alert" class="text-[13px] font-bold text-[#a4492e]">{extractionError}</p>
 			{:else if extractedText}
-				<p class="mb-3 text-[12px] [color:var(--muted-ink)]">
+				<p class="mb-3 text-[12px] text-(--muted-ink)">
 					{extractedText.pagesWithText}
 					{extractedText.pagesWithText === 1 ? 'page avec texte' : 'pages avec texte'} sur {pages.length}
 				</p>
 				{#if extractedText.pagesWithoutText.length}
 					<p
 						role="status"
-						class="mb-4 rounded-[7px] [background:#fff4e7] px-3 py-2 text-[12px] leading-[1.5] [color:#7b4a19]"
+						class="mb-4 rounded-[7px] bg-[#fff4e7] px-3 py-2 text-[12px] leading-normal text-[#7b4a19]"
 					>
 						{extractedText.pagesWithoutText.length}
 						{extractedText.pagesWithoutText.length === 1
@@ -1305,41 +1552,41 @@
 						readonly
 						spellcheck="false"
 						value={extractedText.text}
-						class="h-[min(50vh,_400px)] min-h-[180px] w-full resize-y rounded-[7px] border [border-color:var(--line)] bg-white p-3 font-mono text-[12px] leading-[1.6] [color:var(--ink)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:[outline-color:var(--ring)] max-[520px]:h-[240px]"
+						class="h-[min(50vh,400px)] min-h-45 w-full resize-y rounded-[7px] border border-(--line) bg-white p-3 font-mono text-[12px] leading-[1.6] text-(--ink) focus-visible:outline-(--ring) max-[520px]:h-60 cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 motion-reduce:transition-none motion-reduce:animate-none"
 					></textarea>
 				{:else}
-					<p class="text-[13px] leading-[1.5] [color:var(--muted-ink)]">
+					<p class="text-[13px] leading-normal text-(--muted-ink)">
 						Aucun texte à copier ou à télécharger dans ce document.
 					</p>
 				{/if}
 			{/if}
 		</div>
 		<div
-			class="flex flex-none flex-wrap items-center justify-end gap-2 border-t [border-color:var(--line)] px-6 py-4 max-[520px]:[&_button]:w-full max-[520px]:[&_button]:justify-center"
+			class="flex flex-none flex-wrap items-center justify-end gap-2 border-t border-(--line) px-6 py-4"
 		>
 			{#if extractionFeedback}<span
 					role="status"
-					class="mr-auto text-[11px] font-bold [color:var(--accent)]">{extractionFeedback}</span
+					class="mr-auto text-[11px] font-bold text-(--accent)">{extractionFeedback}</span
 				>{/if}
 			<button
 				type="button"
 				onclick={copyExtractedText}
 				disabled={!extractedText?.text || extractionRunning}
-				class="inline-flex min-h-10 items-center gap-2 rounded-[7px] border [border-color:var(--line)] px-3 text-[12px] font-extrabold hover:[background:#eef1eb] disabled:opacity-50"
+				class="inline-flex min-h-10 items-center gap-2 rounded-[7px] border border-(--line) px-3 text-[12px] font-extrabold hover:bg-[#eef1eb] disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 				><Copy size={16} /> Copier le texte</button
 			>
 			<button
 				type="button"
 				onclick={downloadExtractedText}
 				disabled={!extractedText?.text || extractionRunning}
-				class="inline-flex min-h-10 items-center gap-2 rounded-[7px] [background:var(--accent)] px-3 text-[12px] font-extrabold text-white hover:[background:var(--accent-dark)] disabled:opacity-50"
+				class="inline-flex min-h-10 items-center gap-2 rounded-[7px] bg-(--accent) px-3 text-[12px] font-extrabold text-white hover:bg-(--accent-dark) disabled:opacity-50 max-[520px]:w-full max-[520px]:justify-center cursor-pointer disabled:cursor-not-allowed focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 				><Download size={16} /> Télécharger le .txt</button
 			>
 		</div>
 	</dialog>
 	<dialog
 		bind:this={exportDialog}
-		class="w-[min(440px,_calc(100vw_-_32px))] max-h-[calc(100vh_-_32px)] m-auto p-0 [border:1px_solid_var(--line)] rounded-[12px] [background:var(--paper)] [color:var(--ink)] [box-shadow:0_24px_70px_#17241c40] [&::backdrop]:[background:#17241c99]"
+		class="w-[min(440px,calc(100vw-32px))] max-h-[calc(100vh-32px)] m-auto p-0 border border-(--line) rounded-xl bg-(--paper) text-(--ink) shadow-[0_24px_70px_#17241c40] backdrop:bg-[#17241c99]"
 		aria-labelledby="export-dialog-title"
 		oncancel={(event) => {
 			if (busy) event.preventDefault();
@@ -1357,16 +1604,13 @@
 				void saveProtected();
 			}}
 		>
-			<div
-				class="flex items-center justify-between gap-4 border-b [border-color:var(--line)] px-6 py-5"
-			>
+			<div class="flex items-center justify-between gap-4 border-b border-(--line) px-6 py-5">
 				<div class="flex items-center gap-3">
-					<span
-						class="grid size-10 place-items-center rounded-[9px] [background:#e4eee6] [color:var(--accent)]"
+					<span class="grid size-10 place-items-center rounded-[9px] bg-[#e4eee6] text-(--accent)"
 						><LockKeyhole size={20} /></span
 					>
 					<div>
-						<span class="text-[10px] font-extrabold tracking-[0.14em] [color:var(--accent)]"
+						<span class="text-[10px] font-extrabold tracking-[0.14em] text-(--accent)"
 							>EXPORT PDF</span
 						>
 						<h2 id="export-dialog-title" class="mt-1 text-[17px] font-extrabold">
@@ -1374,28 +1618,28 @@
 						</h2>
 					</div>
 				</div>
-				<button
+				<ActionButton
 					type="button"
 					onclick={() => exportDialog.close()}
 					disabled={busy}
 					aria-label="Fermer l’export"
-					class="grid size-10 place-items-center rounded-[7px] [color:var(--ink)] hover:[background:#eef1eb] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:[outline-color:var(--ring)]"
-					><X size={18} /></button
+					class="grid size-10 place-items-center rounded-[7px] text-(--ink) hover:bg-[#eef1eb] focus-visible:outline-(--ring) cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 motion-reduce:transition-none motion-reduce:animate-none"
+					><X size={18} /></ActionButton
 				>
 			</div>
 			<div class="px-6 py-5">
-				<p class="mb-4 text-[12px] leading-[1.55] [color:var(--muted-ink)]">
+				<p class="mb-4 text-[12px] leading-[1.55] text-(--muted-ink)">
 					Téléchargez le PDF tel quel ou protégez son ouverture par un mot de passe.
 				</p>
 				<button
 					type="button"
 					onclick={savePlain}
 					disabled={busy}
-					class="flex min-h-11 w-full items-center justify-center gap-2 rounded-[7px] border [border-color:var(--line)] text-[12px] font-extrabold [color:var(--ink)] hover:[background:#eef1eb] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:[outline-color:var(--ring)]"
+					class="flex min-h-11 w-full items-center justify-center gap-2 rounded-[7px] border border-(--line) text-[12px] font-extrabold text-(--ink) hover:bg-[#eef1eb] focus-visible:outline-(--ring) cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 motion-reduce:transition-none motion-reduce:animate-none"
 					><Download size={17} /> Télécharger sans mot de passe</button
 				>
 				<div
-					class="my-5 flex items-center gap-3 text-[11px] [color:var(--muted-ink)] before:h-px before:flex-1 before:[background:var(--line)] after:h-px after:flex-1 after:[background:var(--line)]"
+					class="my-5 flex items-center gap-3 text-[11px] text-(--muted-ink) before:h-px before:flex-1 before:bg-(--line) after:h-px after:flex-1 after:bg-(--line)"
 				>
 					OU
 				</div>
@@ -1411,7 +1655,7 @@
 							oninput={() => (exportError = '')}
 							type="password"
 							autocomplete="new-password"
-							class="min-h-11 w-full rounded-[7px] border [border-color:var(--line)] bg-white px-3 text-[14px] [color:var(--ink)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:[outline-color:var(--ring)]"
+							class="min-h-11 w-full rounded-[7px] border border-(--line) bg-white px-3 text-[14px] text-(--ink) focus-visible:outline-(--ring) cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 motion-reduce:transition-none motion-reduce:animate-none"
 						/>
 					</div>
 					<div>
@@ -1425,30 +1669,30 @@
 							oninput={() => (exportError = '')}
 							type="password"
 							autocomplete="new-password"
-							class="min-h-11 w-full rounded-[7px] border [border-color:var(--line)] bg-white px-3 text-[14px] [color:var(--ink)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:[outline-color:var(--ring)]"
+							class="min-h-11 w-full rounded-[7px] border border-(--line) bg-white px-3 text-[14px] text-(--ink) focus-visible:outline-(--ring) cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 motion-reduce:transition-none motion-reduce:animate-none"
 						/>
 					</div>
-					<p class="text-[11px] leading-[1.5] [color:var(--muted-ink)]">
+					<p class="text-[11px] leading-normal text-(--muted-ink)">
 						Conservez ce mot de passe : Inscribe ne pourra pas le récupérer. Vous en aurez besoin
 						pour rouvrir ce PDF.
 					</p>
-					{#if exportError}<p role="alert" class="text-[12px] font-bold [color:#a4492e]">
+					{#if exportError}<p role="alert" class="text-[12px] font-bold text-[#a4492e]">
 							{exportError}
 						</p>{/if}
 				</div>
 			</div>
-			<div class="flex justify-end gap-2 border-t [border-color:var(--line)] px-6 py-4">
+			<div class="flex justify-end gap-2 border-t border-(--line) px-6 py-4">
 				<button
 					type="button"
 					onclick={() => exportDialog.close()}
 					disabled={busy}
-					class="min-h-10 rounded-[7px] border [border-color:var(--line)] px-4 text-[12px] font-extrabold hover:[background:#eef1eb]"
+					class="min-h-10 rounded-[7px] border border-(--line) px-4 text-[12px] font-extrabold hover:bg-[#eef1eb] cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 					>Annuler</button
 				>
 				<button
 					type="submit"
 					disabled={busy}
-					class="min-h-10 rounded-[7px] [background:var(--accent)] px-4 text-[12px] font-extrabold text-white hover:[background:var(--accent-dark)] disabled:opacity-60"
+					class="min-h-10 rounded-[7px] bg-(--accent) px-4 text-[12px] font-extrabold text-white hover:bg-(--accent-dark) disabled:opacity-60 cursor-pointer disabled:cursor-not-allowed focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 					>{busy ? 'Protection…' : 'Protéger et télécharger'}</button
 				>
 			</div>
@@ -1456,67 +1700,66 @@
 	</dialog>
 	<dialog
 		bind:this={infoDialog}
-		class="pdf-info-dialog w-[min(480px,_calc(100vw_-_32px))] max-h-[calc(100vh_-_32px)] m-auto p-0 [border:1px_solid_var(--line)] rounded-[12px] [background:var(--paper)] [color:var(--ink)] [box-shadow:0_24px_70px_#17241c40] [&::backdrop]:[background:#17241c99]"
+		class="pdf-info-dialog w-[min(480px,calc(100vw-32px))] max-h-[calc(100vh-32px)] m-auto p-0 border border-(--line) rounded-xl bg-(--paper) text-(--ink) shadow-[0_24px_70px_#17241c40] backdrop:bg-[#17241c99]"
 		aria-labelledby="pdf-info-title"
 		onclose={() => infoButton?.focus()}
 	>
 		<div
-			class="pdf-info-header sticky top-0 z-[1] flex items-center justify-between gap-[16px] p-[20px_23px] [border-bottom:1px_solid_var(--line)] [background:var(--paper)]"
+			class="pdf-info-header sticky top-0 z-1 flex items-center justify-between gap-4 p-[20px_23px] border-b border-b-(--line) bg-(--paper)"
 		>
-			<div
-				class="pdf-info-heading flex items-center gap-[13px] [&_h2]:m-[4px_0_0] [&_h2]:text-[17px] [&_h2]:leading-[1.2]"
-			>
+			<div class="pdf-info-heading flex items-center gap-3.25">
 				<span
-					class="pdf-info-mark w-[38px] h-[38px] rounded-[9px] grid place-items-center [background:#e4eee6] [color:var(--accent)]"
+					class="pdf-info-mark w-9.5 h-9.5 rounded-[9px] grid place-items-center bg-[#e4eee6] text-(--accent)"
 					><Info size={20} strokeWidth={1.8} /></span
 				>
 				<div>
-					<span
-						class="section-index text-[11px] [color:var(--accent)] tracking-[0.15em] font-extrabold"
+					<span class="section-index text-[11px] text-(--accent) tracking-[0.15em] font-extrabold"
 						>DOCUMENT IMPORTÉ</span
 					>
-					<h2 id="pdf-info-title">Informations sur le PDF</h2>
+					<h2 class="mt-1 text-[17px] leading-[1.2]" id="pdf-info-title">
+						Informations sur le PDF
+					</h2>
 				</div>
 			</div>
-			<button
-				class="icon-button [border:1px_solid_transparent] bg-transparent [color:var(--ink)] rounded-[7px] min-w-[38px] h-[38px] inline-flex items-center justify-center gap-[8px] [&:hover]:[background:#eef1eb]"
+			<ActionButton
+				class="icon-button border border-transparent bg-transparent text-(--ink) rounded-[7px] min-w-9.5 h-9.5 inline-flex items-center justify-center gap-2 hover:bg-[#eef1eb] cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 				type="button"
 				onclick={() => infoDialog.close()}
-				aria-label="Fermer les informations"><X size={18} /></button
+				aria-label="Fermer les informations"><X size={18} /></ActionButton
 			>
 		</div>
 		{#if importedMetadata}
 			<div
-				class="pdf-info-file flex items-center gap-[13px] m-[20px_23px_7px] p-[15px] [border:1px_solid_#dce6dc] rounded-[8px] [background:#f1f6f0] [color:var(--accent)] [&_>_svg]:flex-none [&_div]:min-w-0 [&_div]:flex [&_div]:flex-col [&_div]:gap-[4px] [&_strong]:text-[13px] [&_strong]:wrap-anywhere [&_span]:text-[11px] [&_span]:[color:var(--muted-ink)]"
+				class="pdf-info-file flex items-center gap-3.25 m-[20px_23px_7px] p-3.75 border border-[#dce6dc] rounded-lg bg-[#f1f6f0] text-(--accent)"
 			>
-				<FileText size={22} strokeWidth={1.7} />
-				<div>
-					<strong>{importedMetadata.name}</strong>
-					<span
+				<FileText class="shrink-0" size={22} strokeWidth={1.7} />
+				<div class="min-w-0 flex flex-col gap-1">
+					<strong class="wrap-anywhere text-[13px]">{importedMetadata.name}</strong>
+					<span class="text-[11px] text-(--muted-ink)"
 						>{importedMetadata.size} · {importedMetadata.pages}
 						{importedMetadata.pages === 1 ? 'page' : 'pages'}</span
 					>
 				</div>
 			</div>
-			<dl
-				class="pdf-metadata-list m-0 p-[10px_23px_24px] [&_>_div]:grid [&_>_div]:grid-cols-[145px_minmax(0,_1fr)] [&_>_div]:gap-[14px] [&_>_div]:p-[11px_0] [&_>_div]:[border-bottom:1px_solid_var(--line)] [&_>_div]:text-[12px] [&_>_div]:leading-[1.5] [&_>_div:last-child]:[border-bottom:0] [&_dt]:[color:var(--muted-ink)] [&_dd]:m-0 [&_dd]:font-bold [&_dd]:wrap-anywhere"
-			>
+			<dl class="pdf-metadata-list m-0 p-[10px_23px_24px]">
 				{#each metadataRows as row}
-					<div>
-						<dt>{row.label}</dt>
-						<dd>{row.value}</dd>
+					<div
+						class="grid grid-cols-[145px_minmax(0,1fr)] gap-3.5 p-[11px_0] border-b border-b-(--line) text-[12px] leading-normal last:border-b-0"
+					>
+						<dt class="text-(--muted-ink)">{row.label}</dt>
+						<dd class="m-0 font-bold wrap-anywhere">{row.value}</dd>
 					</div>
 				{/each}
 			</dl>
 		{:else}
-			<p class="pdf-info-loading p-[20px_23px] text-[12px] [color:var(--muted-ink)]">
+			<p class="pdf-info-loading p-[20px_23px] text-[12px] text-(--muted-ink)">
 				Lecture des métadonnées…
 			</p>
 		{/if}
 	</dialog>
 	<dialog
 		bind:this={noteDialog}
-		class="pdf-info-dialog note-dialog w-[min(480px,_calc(100vw_-_32px))] max-h-[calc(100vh_-_32px)] m-auto p-0 [border:1px_solid_var(--line)] rounded-[12px] [background:var(--paper)] [color:var(--ink)] [box-shadow:0_24px_70px_#17241c40] [&::backdrop]:[background:#17241c99]"
+		class="pdf-info-dialog note-dialog w-[min(480px,calc(100vw-32px))] max-h-[calc(100vh-32px)] m-auto p-0 border border-(--line) rounded-xl bg-(--paper) text-(--ink) shadow-[0_24px_70px_#17241c40] backdrop:bg-[#17241c99]"
 		aria-labelledby="note-dialog-title"
 		onclose={() => (noteTrigger?.isConnected ? noteTrigger : noteModeButton)?.focus()}
 	>
@@ -1527,38 +1770,37 @@
 			}}
 		>
 			<div
-				class="pdf-info-header sticky top-0 z-[1] flex items-center justify-between gap-[16px] p-[20px_23px] [border-bottom:1px_solid_var(--line)] [background:var(--paper)]"
+				class="pdf-info-header sticky top-0 z-1 flex items-center justify-between gap-4 p-[20px_23px] border-b border-b-(--line) bg-(--paper)"
 			>
-				<div
-					class="pdf-info-heading flex items-center gap-[13px] [&_h2]:m-[4px_0_0] [&_h2]:text-[17px] [&_h2]:leading-[1.2]"
-				>
+				<div class="pdf-info-heading flex items-center gap-3.25">
 					<span
-						class="pdf-info-mark w-[38px] h-[38px] rounded-[9px] grid place-items-center [background:#e4eee6] [color:var(--accent)]"
+						class="pdf-info-mark w-9.5 h-9.5 rounded-[9px] grid place-items-center bg-[#e4eee6] text-(--accent)"
 						><MessageSquareText size={20} /></span
 					>
 					<div>
-						<span
-							class="section-index text-[11px] [color:var(--accent)] tracking-[0.15em] font-extrabold"
+						<span class="section-index text-[11px] text-(--accent) tracking-[0.15em] font-extrabold"
 							>ANNOTATION PDF</span
 						>
-						<h2 id="note-dialog-title">{editingNote ? 'Modifier la note' : 'Nouvelle note'}</h2>
+						<h2 class="mt-1 text-[17px] leading-[1.2]" id="note-dialog-title">
+							{editingNote ? 'Modifier la note' : 'Nouvelle note'}
+						</h2>
 					</div>
 				</div>
-				<button
-					class="icon-button [border:1px_solid_transparent] bg-transparent [color:var(--ink)] rounded-[7px] min-w-[38px] h-[38px] inline-flex items-center justify-center gap-[8px] [&:hover]:[background:#eef1eb]"
+				<ActionButton
+					class="icon-button border border-transparent bg-transparent text-(--ink) rounded-[7px] min-w-9.5 h-9.5 inline-flex items-center justify-center gap-2 hover:bg-[#eef1eb] cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 					type="button"
 					onclick={() => noteDialog.close()}
-					aria-label="Fermer la note"><X size={18} /></button
+					aria-label="Fermer la note"><X size={18} /></ActionButton
 				>
 			</div>
-			<div
-				class="note-dialog-body p-[20px_23px] [&_p]:m-[0_0_18px] [&_p]:[color:var(--muted-ink)] [&_p]:text-[12px] [&_label]:block [&_label]:mb-[8px] [&_label]:text-[12px] [&_label]:font-extrabold [&_textarea]:w-full [&_textarea]:min-h-[140px] [&_textarea]:p-[12px] [&_textarea]:resize-y [&_textarea]:[border:1px_solid_var(--line)] [&_textarea]:rounded-[7px] [&_textarea]:bg-white [&_textarea]:[color:var(--ink)] [&_textarea]:[font:inherit] [&_textarea]:text-[13px] [&_textarea]:leading-[1.5] [&_textarea:focus-visible]:[outline:3px_solid_var(--ring)] [&_textarea:focus-visible]:[outline-offset:2px]"
-			>
-				<p>
+			<div class="note-dialog-body p-[20px_23px]">
+				<p class="mb-4.5 text-[12px] text-(--muted-ink)">
 					Page {editingNote?.page ?? pendingNote?.page} · Cette note sera intégrée au PDF exporté.
 				</p>
-				<label for="note-text">Texte de la note</label>
+				<label class="block mb-2 text-[12px] font-extrabold" for="note-text">Texte de la note</label
+				>
 				<textarea
+					class="w-full min-h-35 p-3 resize-y border border-(--line) rounded-[7px] bg-white text-(--ink) text-[13px] leading-normal cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 					id="note-text"
 					bind:this={noteTextArea}
 					bind:value={noteText}
@@ -1567,21 +1809,21 @@
 					placeholder="Écrivez votre note ici…"></textarea>
 			</div>
 			<div
-				class="note-dialog-actions flex justify-end items-center flex-wrap gap-[9px] p-[16px_23px] [border-top:1px_solid_var(--line)]"
+				class="note-dialog-actions flex justify-end items-center flex-wrap gap-2.25 p-[16px_23px] border-t border-t-(--line)"
 			>
 				{#if editingNote}<button
-						class="note-delete min-h-[38px] inline-flex items-center gap-[7px] p-[0_13px] border-0 rounded-[7px] text-[12px] font-extrabold mr-[auto] bg-transparent [color:#a4492e] [&:hover]:[background:#fbece5]"
+						class="note-delete min-h-9.5 inline-flex items-center gap-1.75 p-[0_13px] border-0 rounded-[7px] text-[12px] font-extrabold mr-auto bg-transparent text-[#a4492e] hover:bg-[#fbece5] cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 						type="button"
 						onclick={deleteNote}
 						disabled={busy}><Trash2 size={16} /> Supprimer</button
 					>{/if}
 				<button
-					class="toolbar-button [border:1px_solid_transparent] bg-transparent [color:var(--ink)] rounded-[7px] min-w-[38px] h-[38px] inline-flex items-center justify-center gap-[8px] [&:hover]:[background:#eef1eb] [border-color:var(--line)] p-[0_12px] text-[12px] font-extrabold"
+					class="toolbar-button border bg-transparent text-(--ink) rounded-[7px] min-w-9.5 h-9.5 inline-flex items-center justify-center gap-2 hover:bg-[#eef1eb] border-(--line) p-[0_12px] text-[12px] font-extrabold cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 					type="button"
 					onclick={() => noteDialog.close()}>Annuler</button
 				>
 				<button
-					class="note-save min-h-[38px] inline-flex items-center gap-[7px] p-[0_13px] border-0 rounded-[7px] text-[12px] font-extrabold [background:var(--accent)] text-white [&:hover]:[background:var(--accent-dark)]"
+					class="note-save min-h-9.5 inline-flex items-center gap-1.75 p-[0_13px] border-0 rounded-[7px] text-[12px] font-extrabold bg-(--accent) text-white hover:bg-(--accent-dark) cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 					type="submit"
 					disabled={busy || !noteText.trim()}
 					>{busy ? 'Enregistrement…' : 'Enregistrer la note'}</button
@@ -1591,165 +1833,197 @@
 	</dialog>
 	<dialog
 		bind:this={deleteDialog}
-		class="pdf-info-dialog delete-confirm-dialog w-[min(480px,_calc(100vw_-_32px))] max-h-[calc(100vh_-_32px)] m-auto p-0 [border:1px_solid_var(--line)] rounded-[12px] [background:var(--paper)] [color:var(--ink)] [box-shadow:0_24px_70px_#17241c40] [&::backdrop]:[background:#17241c99] w-[min(420px,_calc(100vw_-_32px))]"
+		class="pdf-info-dialog delete-confirm-dialog max-h-[calc(100vh-32px)] m-auto p-0 border border-(--line) rounded-xl bg-(--paper) text-(--ink) shadow-[0_24px_70px_#17241c40] backdrop:bg-[#17241c99] w-[min(420px,calc(100vw-32px))]"
 		aria-labelledby="delete-page-title"
 		onclose={() => (pageToDelete = null)}
 	>
-		<div
-			class="delete-confirm-body p-[27px_27px_18px] [&_h2]:m-0 [&_h2]:text-[18px] [&_h2]:leading-[1.3] [&_p]:m-[10px_0_0] [&_p]:[color:var(--muted-ink)] [&_p]:text-[12px] [&_p]:leading-[1.6]"
-		>
+		<div class="delete-confirm-body p-[27px_27px_18px]">
 			<span
-				class="delete-confirm-icon grid place-items-center w-[40px] h-[40px] mb-[17px] rounded-[9px] [background:#fbece5] [color:#a4492e]"
+				class="delete-confirm-icon grid place-items-center w-10 h-10 mb-4.25 rounded-[9px] bg-[#fbece5] text-[#a4492e]"
 				><Trash2 size={21} strokeWidth={1.8} /></span
 			>
-			<h2 id="delete-page-title">Supprimer la page {pageToDelete} ?</h2>
+			<h2 class="m-0 text-[18px] leading-[1.3]" id="delete-page-title">
+				Supprimer la page {pageToDelete} ?
+			</h2>
 			<p>
 				Cette page sera retirée du PDF en cours. Vous pourrez conserver le résultat en l’exportant.
 			</p>
 		</div>
 		<div
-			class="delete-confirm-actions flex justify-end gap-[9px] p-[16px_27px] [border-top:1px_solid_var(--line)]"
+			class="delete-confirm-actions flex justify-end gap-2.25 p-[16px_27px] border-t border-t-(--line)"
 		>
 			<button
 				type="button"
-				class="toolbar-button [border:1px_solid_transparent] bg-transparent [color:var(--ink)] rounded-[7px] min-w-[38px] h-[38px] inline-flex items-center justify-center gap-[8px] [&:hover]:[background:#eef1eb] [border-color:var(--line)] p-[0_12px] text-[12px] font-extrabold"
+				class="toolbar-button border bg-transparent text-(--ink) rounded-[7px] min-w-9.5 h-9.5 inline-flex items-center justify-center gap-2 hover:bg-[#eef1eb] border-(--line) p-[0_12px] text-[12px] font-extrabold cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 				onclick={() => deleteDialog.close()}>Annuler</button
 			>
 			<button
 				type="button"
-				class="delete-confirm-button min-h-[38px] p-[0_14px] border-0 rounded-[7px] [background:#a4492e] text-white text-[12px] font-extrabold [&:hover]:[background:#873b26]"
+				class="delete-confirm-button min-h-9.5 p-[0_14px] border-0 rounded-[7px] bg-[#a4492e] text-white text-[12px] font-extrabold hover:bg-[#873b26] cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 				onclick={confirmRemoval}>Supprimer la page</button
 			>
 		</div>
 	</dialog>
 	<div
-		class="editor-subbar h-[47px] flex-none [background:#f5f6f1] [border-bottom:1px_solid_var(--line)] flex justify-between items-center p-[0_22px] text-[11px] [color:var(--muted-ink)] max-[760px]:p-[0_12px]"
+		class="editor-subbar h-11.75 flex-none bg-[#f5f6f1] border-b border-b-(--line) flex justify-between items-center gap-2 p-[0_22px] text-[11px] text-(--muted-ink) max-[760px]:h-auto max-[760px]:min-h-11.75 max-[760px]:flex-wrap max-[760px]:gap-y-0.5 max-[760px]:p-[4px_12px]"
 	>
-		<div class="subbar-left flex items-center gap-[14px]">
-			<button
-				class="icon-button sidebar-toggle [border:1px_solid_transparent] bg-transparent [color:var(--ink)] rounded-[7px] min-w-[38px] h-[38px] inline-flex items-center justify-center gap-[8px] [&:hover]:[background:#eef1eb]"
+		<div class="subbar-left flex items-center gap-3.5">
+			<ActionButton
+				class="icon-button sidebar-toggle border border-transparent bg-transparent text-(--ink) rounded-[7px] min-w-9.5 h-9.5 inline-flex items-center justify-center gap-2 hover:bg-[#eef1eb] cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 				type="button"
 				onclick={() => (sidebarOpen = !sidebarOpen)}
 				aria-label={sidebarOpen ? 'Masquer les pages' : 'Afficher les pages'}
-				aria-expanded={sidebarOpen}><Menu size={18} /></button
+				aria-expanded={sidebarOpen}><Menu size={18} /></ActionButton
 			><span
-				class="subbar-label [color:var(--accent)] font-extrabold text-[10px] tracking-[0.13em] max-[760px]:hidden"
+				class="subbar-label text-(--accent) font-extrabold text-[10px] tracking-[0.13em] max-[760px]:hidden"
 				>ÉDITION DU DOCUMENT</span
-			><span class="subbar-divider w-[1px] h-[14px] [background:#ced2c9] max-[760px]:hidden"
-			></span><span>Page {selectedPage} sur {pages.length}</span>
+			><span class="subbar-divider w-px h-3.5 bg-[#ced2c9] max-[760px]:hidden"></span><span
+				class="text-(--muted-ink)">Page {selectedPage} sur {pages.length}</span
+			>
 		</div>
 		<div
-			class="zoom-controls flex items-center gap-[3px] [&_span]:min-w-[50px] [&_span]:text-center [&_span]:text-[11px] [&_span]:font-extrabold [&_span]:[color:var(--ink)] [&_.icon-button]:h-[30px] [&_.icon-button]:min-w-[30px]"
+			class="page-toolbar flex items-center gap-0.5 max-[760px]:order-3 max-[760px]:w-full max-[760px]:justify-center max-[760px]:border-t max-[760px]:border-t-(--line) max-[760px]:pt-0.5"
+			role="group"
+			aria-label={`Actions pour la page ${selectedPage}`}
 		>
-			<button
-				class="icon-button [border:1px_solid_transparent] bg-transparent [color:var(--ink)] rounded-[7px] min-w-[38px] h-[38px] inline-flex items-center justify-center gap-[8px] [&:hover]:[background:#eef1eb]"
+			<PDFContentTools
+				bind:this={contentTools}
+				bind:busy
+				bind:placing={placingContent}
+				onApply={applyDocument}
+			/>
+			<ActionButton
+				class="grid size-8 cursor-pointer place-items-center rounded-md border border-transparent bg-transparent text-(--ink) hover:bg-[#e5ebe3] hover:text-(--accent) disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring)"
+				type="button"
+				onclick={undoHighlight}
+				disabled={busy || !lastHighlightId}
+				aria-label="Annuler le surlignage"
+				title="Annuler le dernier surlignage"><Undo2 size={16} /></ActionButton
+			>
+			<ActionButton
+				class="grid place-items-center w-8 h-8 border border-transparent rounded-[5px] bg-transparent text-(--ink) hover:bg-[#e5ebe3] hover:text-(--accent) focus-visible:outline-(--ring) disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed focus-visible:outline-3 focus-visible:outline-offset-3 motion-reduce:transition-none motion-reduce:animate-none"
+				type="button"
+				onclick={(event) =>
+					void createNoteAt(selectedPage, undefined, undefined, event.currentTarget)}
+				disabled={busy || pages.length === 0}
+				aria-label={`Ajouter une note à la page ${selectedPage}`}
+				title="Ajouter une note"><MessageSquarePlus size={16} /></ActionButton
+			><ActionButton
+				class="grid place-items-center w-8 h-8 border border-transparent rounded-[5px] bg-transparent text-(--ink) hover:bg-[#e5ebe3] hover:text-(--accent) focus-visible:outline-(--ring) disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed focus-visible:outline-3 focus-visible:outline-offset-3 motion-reduce:transition-none motion-reduce:animate-none"
+				type="button"
+				onclick={() => move(selectedPage, -1)}
+				disabled={busy || selectedPage <= 1}
+				aria-label={`Monter la page ${selectedPage}`}
+				title="Monter la page"><ChevronUp size={17} /></ActionButton
+			><ActionButton
+				class="grid place-items-center w-8 h-8 border border-transparent rounded-[5px] bg-transparent text-(--ink) hover:bg-[#e5ebe3] hover:text-(--accent) focus-visible:outline-(--ring) disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed focus-visible:outline-3 focus-visible:outline-offset-3 motion-reduce:transition-none motion-reduce:animate-none"
+				type="button"
+				onclick={() => move(selectedPage, 1)}
+				disabled={busy || selectedPage >= pages.length}
+				aria-label={`Descendre la page ${selectedPage}`}
+				title="Descendre la page"><ChevronDown size={17} /></ActionButton
+			><ActionButton
+				class="grid place-items-center w-8 h-8 border border-transparent rounded-[5px] bg-transparent text-(--ink) hover:bg-[#e5ebe3] hover:text-(--accent) focus-visible:outline-(--ring) disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed focus-visible:outline-3 focus-visible:outline-offset-3 motion-reduce:transition-none motion-reduce:animate-none"
+				type="button"
+				onclick={() => rotate(selectedPage)}
+				disabled={busy || pages.length === 0}
+				aria-label={`Tourner la page ${selectedPage} de 90 degrés`}
+				title="Tourner de 90°"><RotateCw size={16} /></ActionButton
+			><ActionButton
+				class="grid place-items-center w-8 h-8 border border-transparent rounded-[5px] bg-transparent text-(--ink) hover:bg-[#e5ebe3] hover:text-(--accent) focus-visible:outline-(--ring) disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed focus-visible:outline-3 focus-visible:outline-offset-3 motion-reduce:transition-none motion-reduce:animate-none"
+				type="button"
+				onclick={() => duplicate(selectedPage)}
+				disabled={busy || pages.length === 0}
+				aria-label={`Dupliquer la page ${selectedPage}`}
+				title="Dupliquer la page"><Copy size={16} /></ActionButton
+			><ActionButton
+				class="grid place-items-center w-8 h-8 border border-transparent rounded-[5px] bg-transparent text-(--ink) last:text-[#9c442e] last:hover:bg-[#f6dfd5] focus-visible:outline-(--ring) disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed focus-visible:outline-3 focus-visible:outline-offset-3 motion-reduce:transition-none motion-reduce:animate-none"
+				type="button"
+				onclick={() => void remove(selectedPage)}
+				disabled={busy || pages.length <= 1}
+				aria-label={`Supprimer la page ${selectedPage}`}
+				title="Supprimer la page"><Trash2 size={16} /></ActionButton
+			>
+		</div>
+		<div class="zoom-controls flex items-center gap-0.75 max-[760px]:ml-auto">
+			<ActionButton
+				class="icon-button border border-transparent bg-transparent text-(--ink) rounded-[7px] min-w-7.5 h-7.5 inline-flex items-center justify-center gap-2 hover:bg-[#eef1eb] cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 				type="button"
 				onclick={() => setZoom(-0.1)}
 				aria-label="Réduire le zoom"
-				disabled={scale <= minZoom}><Minus size={17} /></button
-			><span aria-live="polite">{Math.round(scale * 100)} %</span><button
-				class="icon-button [border:1px_solid_transparent] bg-transparent [color:var(--ink)] rounded-[7px] min-w-[38px] h-[38px] inline-flex items-center justify-center gap-[8px] [&:hover]:[background:#eef1eb]"
+				disabled={scale <= minZoom}><Minus size={17} /></ActionButton
+			><span
+				class="min-w-12.5 text-center text-[11px] font-extrabold text-(--ink)"
+				aria-live="polite">{Math.round(scale * 100)} %</span
+			><ActionButton
+				class="icon-button border border-transparent bg-transparent text-(--ink) rounded-[7px] min-w-7.5 h-7.5 inline-flex items-center justify-center gap-2 hover:bg-[#eef1eb] cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 				type="button"
 				onclick={() => setZoom(0.1)}
 				aria-label="Augmenter le zoom"
-				disabled={scale >= maxZoom}><Plus size={17} /></button
+				disabled={scale >= maxZoom}><Plus size={17} /></ActionButton
 			>
 		</div>
 	</div>
-	{#if noteMode}<div
-			class="note-placement-banner flex items-center justify-between gap-[12px] p-[9px_22px] [background:#fbece5] [color:#8d3e27] text-[12px] font-extrabold [&_button]:border-0 [&_button]:bg-transparent [&_button]:[color:inherit] [&_button]:text-[inherit] [&_button]:font-extrabold [&_button]:[text-decoration:underline]"
-			role="status"
-		>
-			<span>Cliquez ou touchez une page pour placer la note.</span>
-			<button
-				type="button"
-				onclick={() => {
-					noteMode = false;
-					noteModeButton.focus();
-				}}>Annuler</button
-			>
-		</div>{/if}
-	{#if error || status || ocrProgress}<div
-			class:error
-			class="editor-notice z-[5] flex items-center justify-between gap-[15px] p-[9px_22px] [background:#e7efe8] [color:var(--accent-dark)] text-[12px] font-bold [&.error]:[background:#fff0e8] [&.error]:[color:#8d3e27] [&_button]:[background:none] [&_button]:border-0 [&_button]:[color:inherit] [&_button]:grid [&_button]:place-items-center [&_.notice-undo]:ml-auto [&_.notice-undo]:text-[11px] [&_.notice-undo]:font-extrabold [&_.notice-undo]:[text-decoration:underline] [&_.notice-undo]:whitespace-nowrap"
-			role={error ? 'alert' : 'status'}
-		>
-			{error || ocrProgress || status}
-			{#if status.startsWith('Texte surligné') && lastHighlightId}<button
-					type="button"
-					class="notice-undo"
-					onclick={undoHighlight}
-					disabled={busy}>Annuler le surlignage</button
-				>{/if}
-			<button
-				type="button"
-				onclick={() => {
-					error = '';
-					status = '';
-				}}
-				disabled={busy}
-				aria-label="Fermer le message"><X size={16} /></button
-			>
-		</div>{/if}
 	{#if selectedText}<div
-			class="highlight-toolbar fixed z-[30] left-[50%] bottom-[20px] [transform:translateX(-50%)] w-[min(360px,_calc(100vw_-_24px))] max-h-[calc(100dvh_-_24px)] overflow-y-auto p-[13px] [border:1px_solid_#c8d1c6] rounded-[10px] [background:var(--paper)] [box-shadow:0_12px_36px_#20302535] max-[760px]:bottom-[10px]"
+			class="highlight-toolbar fixed z-30 left-[50%] bottom-5 transform-[translateX(-50%)] w-[min(360px,calc(100vw-24px))] max-h-[calc(100dvh-24px)] overflow-y-auto p-3.25 border border-[#c8d1c6] rounded-[10px] bg-(--paper) shadow-[0_12px_36px_#20302535] max-[760px]:bottom-2.5"
 			role="toolbar"
 			aria-label="Surligner le texte sélectionné"
 		>
 			<div
-				class="highlight-toolbar-title flex items-center gap-[9px] [color:var(--accent)] text-[12px] font-extrabold [&_>_svg]:flex-none [&_span]:min-w-0 [&_span]:flex-1 [&_span]:overflow-hidden [&_span]:text-ellipsis [&_span]:whitespace-nowrap [&_strong]:[color:var(--ink)] [&_strong]:font-bold [&_button]:grid [&_button]:place-items-center [&_button]:w-[28px] [&_button]:h-[28px] [&_button]:border-0 [&_button]:rounded-[5px] [&_button]:bg-transparent [&_button]:[color:var(--muted-ink)] [&_button:hover]:[background:#e9eee7]"
+				class="highlight-toolbar-title flex items-center gap-2.25 text-(--accent) text-[12px] font-extrabold"
 			>
-				<Highlighter size={17} /><span
-					>Surligner <strong
+				<Highlighter class="flex-none" size={17} /><span
+					class="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap"
+					>Surligner <strong class="text-(--ink) font-bold"
 						>« {selectedText.text.length > 48
 							? `${selectedText.text.slice(0, 48)}…`
 							: selectedText.text} »</strong
 					></span
-				><button type="button" onclick={clearTextSelection} aria-label="Fermer les couleurs"
-					><X size={16} /></button
+				><ActionButton
+					class="grid w-7 h-7 place-items-center border-0 rounded-[5px] bg-transparent text-(--muted-ink) hover:bg-[#e9eee7] cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
+					type="button"
+					onclick={clearTextSelection}
+					aria-label="Fermer les couleurs"><X size={16} /></ActionButton
 				>
 			</div>
-			<div class="highlight-colors flex items-center gap-[9px] mt-[11px]">
-				{#each highlightColors as color}<button
+			<div class="highlight-colors flex items-center gap-2.25 mt-2.75">
+				{#each highlightColors as color}<ActionButton
 						type="button"
-						class="highlight-swatch w-[34px] h-[34px] flex-none [border:1px_solid_#0003] rounded-[6px] [box-shadow:inset_0_0_0_3px_#fff8] [&:hover]:[transform:translateY(-2px)] [&:hover]:[box-shadow:inset_0_0_0_3px_#fff8,_0_3px_8px_#0002]"
-						style:background={color.value}
+						class="highlight-swatch w-8.5 h-8.5 flex-none border border-[#0003] rounded-md shadow-[inset_0_0_0_3px_#fff8] hover:transform-[translateY(-2px)] hover:shadow-[inset_0_0_0_3px_#fff8,0_3px_8px_#0002] cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
+						style={`background: ${color.value}`}
 						onclick={() => highlightSelection(color.value)}
 						disabled={busy}
 						aria-label={`Surligner en ${color.name}`}
 						title={color.name}
-					></button>{/each}
-				<button
+					></ActionButton>{/each}
+				<ActionButton
 					type="button"
-					class="highlight-custom-toggle flex items-center gap-[7px] min-h-[34px] ml-auto p-[0_8px] [border:1px_solid_var(--line)] rounded-[6px] bg-transparent [color:var(--ink)] text-[11px] font-extrabold [&:hover]:[background:#eef1eb]"
+					class="highlight-custom-toggle flex items-center gap-1.75 min-h-8.5 ml-auto p-[0_8px] border border-(--line) rounded-md bg-transparent text-(--ink) text-[11px] font-extrabold hover:bg-[#eef1eb] cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 					onclick={() => (colorWheelOpen = !colorWheelOpen)}
 					aria-expanded={colorWheelOpen}
 					aria-label="Choisir une couleur personnalisée"
-					><span
-						class="highlight-custom-icon w-[16px] h-[16px] [border:1px_solid_#0002] rounded-full [background:conic-gradient(red,_yellow,_lime,_cyan,_blue,_magenta,_red)]"
-						aria-hidden="true"
-					></span> Personnaliser</button
+					><Pipette size={16} class="shrink-0" aria-hidden="true" /> Personnaliser</ActionButton
 				>
 			</div>
 			{#if colorWheelOpen}<div
-					class="highlight-wheel-panel grid justify-items-center gap-[12px] mt-[13px] pt-[14px] [border-top:1px_solid_var(--line)]"
+					class="highlight-wheel-panel grid justify-items-center gap-3 mt-3.25 pt-3.5 border-t border-t-(--line)"
 				>
 					<ColorWheel bind:value={customColor} /><button
 						type="button"
-						class="highlight-apply w-full min-h-[38px] border-0 rounded-[6px] [background:var(--accent)] text-white text-[12px] font-extrabold [&:hover]:[background:var(--accent-dark)]"
+						class="highlight-apply w-full min-h-9.5 border-0 rounded-md bg-(--accent) text-white text-[12px] font-extrabold hover:bg-(--accent-dark) cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 						onclick={() => highlightSelection(customColor)}
 						disabled={busy}>Surligner avec cette couleur</button
 					>
 				</div>{/if}
 		</div>{/if}
-	<div class="editor-body flex min-h-[0] flex-1">
+	<div class="editor-body flex min-h-0 flex-1">
 		{#if sidebarOpen}<aside
-				class="page-sidebar w-[222px] flex-none min-h-[0] flex flex-col [background:#f6f6f2] [border-right:1px_solid_var(--line)] max-[760px]:absolute max-[760px]:z-[10] max-[760px]:top-[111px] max-[760px]:bottom-[0] max-[760px]:w-[min(78vw,_250px)] max-[760px]:[box-shadow:12px_0_20px_#24342817]"
+				class="page-sidebar w-55.5 flex-none min-h-0 flex flex-col bg-[#f6f6f2] border-r border-r-(--line) max-[760px]:absolute max-[760px]:z-10 max-[760px]:top-36.75 max-[760px]:bottom-0 max-[760px]:w-[min(78vw,250px)] max-[760px]:shadow-[12px_0_20px_#24342817]"
 				aria-label="Pages du document"
 				onscrollcapture={() => scheduleVisibleRender()}
 			>
 				<div
-					class="sidebar-heading [color:var(--accent)] font-extrabold text-[10px] tracking-[0.13em] p-[21px_22px_15px] flex justify-between"
+					class="sidebar-heading text-(--accent) font-extrabold text-[10px] tracking-[0.13em] p-[21px_22px_15px] flex justify-between"
 				>
 					<span>PAGES</span><span>{String(pages.length).padStart(2, '0')}</span>
 				</div>
@@ -1765,7 +2039,7 @@
 								class:drop-after={dropTargetPage === page &&
 									draggedPage !== null &&
 									draggedPage < page}
-								class="thumbnail-item relative flex flex-col items-center w-full p-[13px_10px] [border:1px_solid_transparent] rounded-[8px] bg-transparent [color:var(--ink)] cursor-grab [&.dragging]:opacity-[0.55] [&.dragging]:cursor-grabbing [&.drop-before::before]:[content:''] [&.drop-before::before]:absolute [&.drop-before::before]:left-[7px] [&.drop-before::before]:right-[7px] [&.drop-before::before]:h-[3px] [&.drop-before::before]:rounded-[3px] [&.drop-before::before]:[background:var(--orange)] [&.drop-after::after]:[content:''] [&.drop-after::after]:absolute [&.drop-after::after]:left-[7px] [&.drop-after::after]:right-[7px] [&.drop-after::after]:h-[3px] [&.drop-after::after]:rounded-[3px] [&.drop-after::after]:[background:var(--orange)] [&.drop-before::before]:top-0 [&.drop-after::after]:bottom-[0] [&:hover]:[background:#e9eee7] [&.active]:[background:#e4eee6] [&.active]:[border-color:#c6d8c9] [&.active_.thumbnail-paper]:[border-color:var(--accent)]"
+								class="thumbnail-item relative flex flex-col items-center w-full p-[13px_10px] border border-transparent rounded-lg bg-transparent text-(--ink) cursor-grab [&.dragging]:opacity-[0.55] [&.dragging]:cursor-grabbing [&.drop-before::before]:content-[''] [&.drop-before::before]:absolute [&.drop-before::before]:left-1.75 [&.drop-before::before]:right-1.75 [&.drop-before::before]:h-0.75 [&.drop-before::before]:rounded-[3px] [&.drop-before::before]:bg-(--orange) [&.drop-after::after]:content-[''] [&.drop-after::after]:absolute [&.drop-after::after]:left-1.75 [&.drop-after::after]:right-1.75 [&.drop-after::after]:h-0.75 [&.drop-after::after]:rounded-[3px] [&.drop-after::after]:bg-(--orange) [&.drop-before::before]:top-0 [&.drop-after::after]:bottom-0 hover:bg-[#e9eee7] [&.active]:bg-[#e4eee6] [&.active]:border-[#c6d8c9] disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 								type="button"
 								draggable={!busy}
 								ondragstart={(event) => startPageDrag(event, page)}
@@ -1778,30 +2052,39 @@
 								aria-describedby="page-reorder-hint"
 								aria-current={selectedPage === page ? 'page' : undefined}
 								><span
-									class="thumbnail-paper w-[120px] min-h-[158px] grid place-items-center p-[3px] [border:1px_solid_#d3d6ce] [box-shadow:0_2px_8px_#24342816] bg-white [&_canvas]:block [&_canvas]:w-[auto] [&_canvas]:max-w-[112px] [&_canvas]:max-h-[150px]"
-									><canvas width="0" height="0"></canvas></span
+									class="thumbnail-paper w-30 min-h-39.5 grid place-items-center p-0.75 border shadow-[0_2px_8px_#24342816] bg-white {selectedPage ===
+									page
+										? 'border-(--accent)'
+										: 'border-[#d3d6ce]'}"
+									><canvas class="block w-auto max-w-28 max-h-37.5" width="0" height="0"
+									></canvas></span
 								><span
-									class="thumbnail-caption flex justify-between w-full mt-[10px] text-[11px] font-bold [&_span:first-child]:[color:var(--accent)] [&_span:first-child]:font-extrabold"
-									><span>{String(page).padStart(2, '0')}</span><span>Page {page}</span></span
+									class="thumbnail-caption flex justify-between w-full mt-2.5 text-[11px] font-bold"
+									><span class="text-(--accent) font-extrabold"
+										>{String(page).padStart(2, '0')}</span
+									><span>Page {page}</span></span
 								></button
 							>{/each}
 					</ContextMenu.Trigger>
 					<ContextMenu.Portal>
 						<ContextMenu.Content
-							class="page-context-menu z-[50] min-w-[192px] p-[4px] [border:1px_solid_var(--line)] rounded-[8px] [background:var(--paper)] [color:var(--ink)] [box-shadow:0_12px_32px_#24342825] [&_[role='menuitem']]:flex [&_[role='menuitem']]:items-center [&_[role='menuitem']]:gap-[10px] [&_[role='menuitem']]:min-h-[34px] [&_[role='menuitem']]:p-[6px_9px] [&_[role='menuitem']]:rounded-[5px] [&_[role='menuitem']]:[outline:none] [&_[role='separator']]:h-[1px] [&_[role='separator']]:m-[4px_-4px] [&_[role='separator']]:[background:var(--line)] [&_[role='menuitem'][data-highlighted]]:[background:#e9eee7] [&_[role='menuitem'][data-disabled]]:opacity-[0.45] [&_.context-danger]:[color:#a4492e]"
+							class="page-context-menu z-50 min-w-48 p-1 border border-(--line) rounded-lg bg-(--paper) text-(--ink) shadow-[0_12px_32px_#24342825]"
 						>
 							<ContextMenu.Item
+								class="flex min-h-8.5 items-center gap-2.5 p-[6px_9px] rounded-[5px] outline-none data-highlighted:bg-[#e9eee7] data-disabled:opacity-[0.45]"
 								onSelect={() => contextMenuPage !== null && move(contextMenuPage, -1)}
 								disabled={busy || contextMenuPage === null || contextMenuPage === 1}
 								><ChevronUp size={16} /> Monter la page</ContextMenu.Item
 							>
 							<ContextMenu.Item
+								class="flex min-h-8.5 items-center gap-2.5 p-[6px_9px] rounded-[5px] outline-none data-highlighted:bg-[#e9eee7] data-disabled:opacity-[0.45]"
 								onSelect={() => contextMenuPage !== null && move(contextMenuPage, 1)}
 								disabled={busy || contextMenuPage === null || contextMenuPage === pages.length}
 								><ChevronDown size={16} /> Descendre la page</ContextMenu.Item
 							>
-							<ContextMenu.Separator />
+							<ContextMenu.Separator class="h-px m-[4px_-4px] bg-(--line)" />
 							<ContextMenu.Item
+								class="flex min-h-8.5 items-center gap-2.5 p-[6px_9px] rounded-[5px] outline-none data-highlighted:bg-[#e9eee7] data-disabled:opacity-[0.45]"
 								onSelect={() => contextMenuPage !== null && duplicate(contextMenuPage)}
 								disabled={busy || contextMenuPage === null}
 								><Copy size={16} /> Dupliquer la page</ContextMenu.Item
@@ -1809,37 +2092,43 @@
 							<ContextMenu.Item
 								onSelect={() => contextMenuPage !== null && remove(contextMenuPage)}
 								disabled={busy || contextMenuPage === null || pages.length <= 1}
-								class="context-danger"><Trash2 size={16} /> Supprimer la page</ContextMenu.Item
+								class="flex min-h-8.5 items-center gap-2.5 p-[6px_9px] rounded-[5px] outline-none data-highlighted:bg-[#e9eee7] data-disabled:opacity-[0.45] text-[#a4492e]"
+								><Trash2 size={16} /> Supprimer la page</ContextMenu.Item
 							>
 						</ContextMenu.Content>
 					</ContextMenu.Portal>
 				</ContextMenu.Root>
 				<div
-					class="sidebar-footer mt-auto p-[14px_18px] [border-top:1px_solid_var(--line)] [color:var(--muted-ink)] text-[10px] flex items-center gap-[8px] [&_.touch-hint]:hidden max-[760px]:[&_.desktop-hint]:hidden max-[760px]:[&_.touch-hint]:inline"
+					class="sidebar-footer mt-auto p-[14px_18px] border-t border-t-(--line) text-(--muted-ink) text-[10px] flex items-center gap-2"
 					id="page-reorder-hint"
 				>
-					<FileText size={15} /><span class="desktop-hint"
+					<FileText size={15} /><span class="desktop-hint max-[760px]:hidden"
 						>Glissez pour réordonner · clic droit pour les actions</span
-					><span class="touch-hint">Utilisez les flèches sous chaque page</span>
+					><span class="touch-hint hidden max-[760px]:inline"
+						>Utilisez les flèches sous chaque page</span
+					>
 				</div>
 			</aside>{/if}
 		<main
 			bind:this={documentStage}
-			class="document-stage flex-1 min-w-0 overflow-auto scroll-smooth [touch-action:pan-x_pan-y] overscroll-contain [&.pinching]:scroll-auto motion-reduce:scroll-auto"
+			class="document-stage flex-1 min-w-0 overflow-auto scroll-smooth touch-pan-x touch-pan-y overscroll-contain [&.pinching]:scroll-auto motion-reduce:scroll-auto"
 			class:pinching={pinch !== null || pendingZoomAnchor !== null}
 			aria-label="Aperçu du document"
 			onscroll={() => scheduleVisibleRender(true)}
+			onwheel={zoomWithWheel}
 			{@attach pinchListeners}
 			ontouchend={endPinch}
 			ontouchcancel={endPinch}
 		>
 			<div
-				class="stage-inner w-fit min-w-[100%] p-[28px_clamp(20px,_5vw,_70px)_50px] m-auto max-[760px]:p-[20px_16px_40px]"
+				class="stage-inner w-fit min-w-full p-[28px_clamp(20px,5vw,70px)_50px] m-auto max-[760px]:p-[20px_16px_40px]"
 			>
 				<div
-					class="stage-heading [color:var(--accent)] font-extrabold text-[10px] tracking-[0.13em] flex justify-between gap-[20px] max-w-[1000px] m-[0_auto_24px] [&_span:last-child]:[color:var(--muted-ink)] max-[520px]:text-[9px]"
+					class="stage-heading text-(--accent) font-extrabold text-[10px] tracking-[0.13em] flex justify-between gap-5 max-w-250 m-[0_auto_24px] max-[520px]:text-[9px]"
 				>
-					<span>APERÇU DU DOCUMENT</span><span>Page {selectedPage} sur {pages.length}</span>
+					<span>APERÇU DU DOCUMENT</span><span class="text-(--muted-ink)"
+						>Page {selectedPage} sur {pages.length}</span
+					>
 				</div>
 				{#each pageItems as { id, page } (id)}<section
 						animate:flip={{ duration: animatingReorder ? moveDuration : 0, easing: cubicOut }}
@@ -1848,23 +2137,23 @@
 						aria-label={`Page ${page}`}
 					>
 						<div
-							class="pdf-sheet relative bg-white [box-shadow:0_12px_36px_#2b352429,_0_1px_3px_#2b352419] [&.placing-note]:cursor-crosshair [&.placing-note_.textLayer]:cursor-crosshair [&.placing-note_.textLayer]:pointer-events-none [&_canvas]:block [&_canvas]:max-w-none [&_.textLayer]:absolute [&_.textLayer]:z-[2] [&_.textLayer]:top-0 [&_.textLayer]:left-0 [&_.textLayer]:overflow-hidden"
+							class="pdf-sheet relative bg-white shadow-[0_12px_36px_#2b352429,0_1px_3px_#2b352419] [&.placing-note]:cursor-crosshair"
 							class:placing-note={noteMode}
 							style:zoom={pinchFactor}
 						>
-							<canvas width="0" height="0"></canvas>
-							{#if !renderedPages.has(page)}<div
-									class="page-loading absolute inset-0 grid place-items-center p-[20px] bg-white [color:var(--muted-ink)] text-[12px] font-bold"
+							<canvas class="block max-w-none" width="0" height="0"></canvas>
+							{#if !renderedPageIds.has(pageItems[page - 1]?.id ?? -1)}<div
+									class="page-loading absolute inset-0 grid place-items-center p-5 bg-white text-(--muted-ink) text-[12px] font-bold"
 									aria-hidden="true"
 								>
 									Chargement de la page {page}…
 								</div>{/if}
 							<div
-								class="highlight-layer absolute z-[1] inset-0 pointer-events-none mix-blend-multiply"
+								class="highlight-layer absolute z-1 inset-0 pointer-events-none mix-blend-multiply"
 								aria-hidden="true"
 							>
 								{#each highlightRects.filter((item) => item.page === page) as highlight}<span
-										class="highlight-rect absolute rounded-[2px] opacity-[0.5]"
+										class="highlight-rect absolute rounded-xs opacity-[0.5]"
 										style:left={`${highlight.left}px`}
 										style:top={`${highlight.top}px`}
 										style:width={`${highlight.width}px`}
@@ -1872,15 +2161,67 @@
 										style:background={highlight.color}
 									></span>{/each}
 							</div>
-							<div class="textLayer"></div>
+							<div
+								class="textLayer absolute z-2 top-0 left-0 overflow-hidden"
+								class:pointer-events-none={noteMode}
+								class:cursor-crosshair={noteMode}
+							></div>
+							{#if placingContent}
+								<button
+									type="button"
+									class="absolute inset-0 z-5 size-full cursor-crosshair border-0 bg-transparent focus-visible:outline-3 focus-visible:outline-(--ring)"
+									aria-label={`Placer le contenu sur la page ${page}`}
+									onclick={(event) => {
+										const bounds = event.currentTarget.getBoundingClientRect();
+										void contentTools.place(
+											page,
+											event.detail === 0 ? 0.1 : (event.clientX - bounds.left) / bounds.width,
+											event.detail === 0 ? 0.15 : (event.clientY - bounds.top) / bounds.height
+										);
+									}}
+								></button>
+							{/if}
+							{#if !placingContent && !noteMode}
+								{#each formRects.filter((item) => item.field.page === page) as item}
+									<ActionButton
+										class="absolute z-4 cursor-move touch-none rounded-xs border border-dashed border-transparent bg-transparent hover:border-(--accent) hover:bg-(--accent)/8 focus-visible:outline-3 focus-visible:outline-(--ring)"
+										style={`left: ${item.left}px; top: ${item.top}px; width: ${item.width}px; height: ${item.height}px`}
+										aria-label={item.field.kind === 'placed-text'
+											? 'Modifier ou déplacer le texte ajouté'
+											: `Déplacer ou modifier le champ ${item.field.name}`}
+										tooltip={item.field.kind === 'placed-text'
+											? 'Cliquer pour modifier ou supprimer · glisser pour déplacer · Alt + flèches au clavier'
+											: 'Glisser pour déplacer · cliquer pour modifier · Alt + flèches au clavier'}
+										disabled={busy}
+										onpointerdown={(event) =>
+											startFieldDrag(event, item.field, item.left, item.top)}
+										onkeydown={(event) =>
+											void moveFieldWithKeyboard(
+												event,
+												item.field,
+												item.left,
+												item.top,
+												item.width,
+												item.height
+											)}
+										onclick={() => {
+											if (suppressFieldClick) {
+												suppressFieldClick = false;
+												return;
+											}
+											contentTools.edit(item.field);
+										}}
+									></ActionButton>
+								{/each}
+							{/if}
 							{#if noteMode}<button
-									class="note-placement-target absolute z-[2] inset-0 w-full h-full p-0 border-0 bg-transparent cursor-crosshair [&:focus-visible]:[outline:3px_solid_var(--ring)] [&:focus-visible]:[outline-offset:2px]"
+									class="note-placement-target absolute z-2 inset-0 w-full h-full p-0 border-0 bg-transparent cursor-crosshair disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 									type="button"
 									aria-label={`Placer une note sur la page ${page}`}
 									onclick={(event) => onSheetClick(event, page)}
 								></button>{/if}
 							{#each noteMarkers.filter((note) => note.page === page) as note (note.id)}<button
-									class="note-marker absolute z-[3] grid place-items-center w-[28px] h-[28px] p-0 [border:1px_solid_#9c4a2e] rounded-[5px] [background:#f8d6a1] [color:#70351f] [box-shadow:0_2px_7px_#33221844] [&:hover]:[background:#ffbf78] [&:focus-visible]:[outline:3px_solid_var(--ring)] [&:focus-visible]:[outline-offset:2px]"
+									class="note-marker absolute z-3 grid place-items-center w-7 h-7 p-0 border border-[#9c4a2e] rounded-[5px] bg-[#f8d6a1] text-[#70351f] shadow-[0_2px_7px_#33221844] hover:bg-[#ffbf78] cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 									type="button"
 									style:left={`${note.left}px`}
 									style:top={`${note.top}px`}
@@ -1893,44 +2234,55 @@
 									}}><MessageSquareText size={16} /></button
 								>{/each}
 						</div>
-						<div
-							class="page-actions [&_>_span]:[color:var(--accent)] [&_>_span]:font-extrabold [&_>_span]:text-[10px] [&_>_span]:tracking-[0.13em] flex justify-between items-center mt-[13px] [color:var(--muted-ink)] [&_>_div]:flex [&_>_div]:items-center [&_>_div]:gap-[3px] [&_button]:[border:1px_solid_transparent] [&_button]:bg-transparent [&_button]:[color:#58615a] [&_button]:grid [&_button]:place-items-center [&_button]:w-[33px] [&_button]:h-[32px] [&_button]:rounded-[5px] [&_button:hover]:[background:#dce5db] [&_button:hover]:[color:var(--accent)] [&_button.danger-action:hover]:[background:#f6dfd5] [&_button.danger-action:hover]:[color:#9c442a]"
-						>
-							<span>PAGE {String(page).padStart(2, '0')}</span>
-							<div>
-								<button
+						<div class="page-actions flex justify-between items-center mt-3.25 text-(--muted-ink)">
+							<span class="text-(--accent) font-extrabold text-[10px] tracking-[0.13em]"
+								>PAGE {String(page).padStart(2, '0')}</span
+							>
+							<div class="flex items-center gap-0.75">
+								<ActionButton
+									class="grid place-items-center w-8.25 h-8 border border-transparent rounded-[5px] bg-transparent text-[#58615a] hover:bg-[#dce5db] hover:text-(--accent) cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 									type="button"
 									onclick={(event) =>
 										void createNoteAt(page, undefined, undefined, event.currentTarget)}
 									disabled={busy}
 									aria-label={`Ajouter une note à la page ${page}`}
-									title="Ajouter une note"><MessageSquarePlus size={17} /></button
+									title="Ajouter une note"><MessageSquarePlus size={17} /></ActionButton
 								>
-								<button
+								<ActionButton
+									class="grid place-items-center w-8.25 h-8 border border-transparent rounded-[5px] bg-transparent text-[#58615a] hover:bg-[#dce5db] hover:text-(--accent) cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 									type="button"
 									onclick={() => move(page, -1)}
 									disabled={busy || page === 1}
 									aria-label={`Déplacer la page ${page} vers le haut`}
-									title="Monter"><ChevronUp size={17} /></button
-								><button
+									title="Monter"><ChevronUp size={17} /></ActionButton
+								><ActionButton
+									class="grid place-items-center w-8.25 h-8 border border-transparent rounded-[5px] bg-transparent text-[#58615a] hover:bg-[#dce5db] hover:text-(--accent) cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 									type="button"
 									onclick={() => move(page, 1)}
 									disabled={busy || page === pages.length}
 									aria-label={`Déplacer la page ${page} vers le bas`}
-									title="Descendre"><ChevronDown size={17} /></button
-								><button
+									title="Descendre"><ChevronDown size={17} /></ActionButton
+								><ActionButton
+									class="grid place-items-center w-8.25 h-8 border border-transparent rounded-[5px] bg-transparent text-[#58615a] hover:bg-[#dce5db] hover:text-(--accent) cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
+									type="button"
+									onclick={() => rotate(page)}
+									disabled={busy}
+									aria-label={`Tourner la page ${page} de 90 degrés`}
+									title="Tourner de 90°"><RotateCw size={17} /></ActionButton
+								><ActionButton
+									class="grid place-items-center w-8.25 h-8 border border-transparent rounded-[5px] bg-transparent text-[#58615a] hover:bg-[#dce5db] hover:text-(--accent) cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 									type="button"
 									onclick={() => duplicate(page)}
 									disabled={busy}
 									aria-label={`Dupliquer la page ${page}`}
-									title="Dupliquer"><Copy size={17} /></button
-								><button
+									title="Dupliquer"><Copy size={17} /></ActionButton
+								><ActionButton
+									class="grid place-items-center w-8.25 h-8 border border-transparent rounded-[5px] bg-transparent text-[#58615a] hover:bg-[#f6dfd5] hover:text-[#9c442e] cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 									type="button"
-									class="danger-action"
 									onclick={() => remove(page)}
 									disabled={busy || pages.length <= 1}
 									aria-label={`Supprimer la page ${page}`}
-									title="Supprimer"><Trash2 size={17} /></button
+									title="Supprimer"><Trash2 size={17} /></ActionButton
 								>
 							</div>
 						</div>

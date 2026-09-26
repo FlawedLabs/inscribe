@@ -1,4 +1,5 @@
 <script lang="ts">
+	import ActionButton from '#lib/components/ActionButton.svelte';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import {
@@ -11,11 +12,9 @@
 		UploadCloud,
 		X
 	} from '@lucide/svelte';
-	import { fileSession } from '../stores/FileStore.svelte';
+	import { fileSession, getProcessedFile, setProcessedFile } from '../stores/FileStore.svelte';
 	import * as PDFLibHelper from '#lib/utils/PDFLibHelper.js';
 	import * as PDFjsHelper from '#lib/utils/PDFjsHelper.js';
-	import * as pdfJS from 'pdfjs-dist';
-	import pdfJSWorkerURL from 'pdfjs-dist/legacy/build/pdf.worker.mjs?url';
 	import { listRecentFiles, openRecentDatabase, saveRecentFile } from '#lib/utils/IndexDBUtils.js';
 	import type { RecentFile } from '../types/recentFile';
 
@@ -32,8 +31,6 @@
 	let openingPassword = $state('');
 	let passwordError = $state('');
 
-	pdfJS.GlobalWorkerOptions.workerSrc = pdfJSWorkerURL;
-
 	onMount(() => {
 		let active = true;
 		dbPromise = openRecentDatabase();
@@ -49,7 +46,7 @@
 			})
 			.catch(() => {
 				if (active)
-					error = 'L’historique local est indisponible. Vous pouvez toujours ouvrir un PDF.';
+					error = "L'historique local est indisponible. Vous pouvez toujours ouvrir un PDF.";
 			});
 		return () => {
 			active = false;
@@ -74,11 +71,11 @@
 			}
 			const document = await PDFLibHelper.load(workingFile);
 			const preview = await PDFjsHelper.parse(workingFile);
-			const previousPreview = fileSession.processedFile;
+			const previousPreview = getProcessedFile();
 			fileSession.fileName = file.name;
 			fileSession.openedFile = workingFile;
 			fileSession.updatedFile = document;
-			fileSession.processedFile = preview;
+			setProcessedFile(preview);
 			if (previousPreview && previousPreview !== preview)
 				void previousPreview.loadingTask.destroy().catch(() => undefined);
 			if (remember) {
@@ -108,7 +105,7 @@
 						? 'Mot de passe incorrect. Réessayez.'
 						: 'Ce PDF protégé ne peut pas être ouvert.';
 			} else {
-				error = 'Impossible d’ouvrir ce PDF. Vérifiez qu’il n’est pas endommagé.';
+				error = "Impossible d'ouvrir ce PDF. Vérifiez qu'il n'est pas endommagé.";
 			}
 		} finally {
 			isLoading = false;
@@ -154,7 +151,7 @@
 
 <dialog
 	bind:this={passwordDialog}
-	class="w-[min(420px,_calc(100vw_-_32px))] m-auto p-0 rounded-[12px] [border:1px_solid_var(--line)] [background:var(--paper)] [color:var(--ink)] [box-shadow:0_24px_70px_#17241c40] [&::backdrop]:[background:#17241c99]"
+	class="w-[min(420px,calc(100vw-32px))] m-auto p-0 rounded-xl border border-(--line) bg-(--paper) text-(--ink) shadow-[0_24px_70px_#17241c40] backdrop:bg-[#17241c99]"
 	aria-labelledby="open-password-title"
 	oncancel={(event) => {
 		if (isLoading) event.preventDefault();
@@ -171,27 +168,24 @@
 			submitPassword();
 		}}
 	>
-		<div
-			class="flex items-center justify-between gap-3 border-b [border-color:var(--line)] px-6 py-5"
-		>
+		<div class="flex items-center justify-between gap-3 border-b border-(--line) px-6 py-5">
 			<div class="flex items-center gap-3">
-				<span
-					class="grid size-10 place-items-center rounded-[9px] [background:#e4eee6] [color:var(--accent)]"
+				<span class="grid size-10 place-items-center rounded-[9px] bg-[#e4eee6] text-(--accent)"
 					><LockKeyhole size={20} /></span
 				>
 				<h2 id="open-password-title" class="text-[17px] font-extrabold">PDF protégé</h2>
 			</div>
-			<button
+			<ActionButton
 				type="button"
 				onclick={() => passwordDialog.close()}
 				disabled={isLoading}
 				aria-label="Fermer"
-				class="grid size-10 place-items-center rounded-[7px] hover:[background:#eef1eb] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:[outline-color:var(--ring)]"
-				><X size={18} /></button
+				class="grid size-10 place-items-center rounded-[7px] hover:bg-[#eef1eb] focus-visible:outline-(--ring) cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 motion-reduce:transition-none motion-reduce:animate-none"
+				><X size={18} /></ActionButton
 			>
 		</div>
 		<div class="space-y-3 px-6 py-5">
-			<p class="wrap-anywhere text-[12px] leading-[1.5] [color:var(--muted-ink)]">
+			<p class="wrap-anywhere text-[12px] leading-normal text-(--muted-ink)">
 				Saisissez le mot de passe pour ouvrir {protectedFile?.file.name}.
 			</p>
 			<label for="open-password" class="block text-[12px] font-extrabold"
@@ -205,88 +199,101 @@
 				type="password"
 				autocomplete="current-password"
 				required
-				class="min-h-11 w-full rounded-[7px] border [border-color:var(--line)] bg-white px-3 text-[14px] [color:var(--ink)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:[outline-color:var(--ring)]"
+				class="min-h-11 w-full rounded-[7px] border border-(--line) bg-white px-3 text-[14px] text-(--ink) focus-visible:outline-(--ring) cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 motion-reduce:transition-none motion-reduce:animate-none"
 			/>
-			{#if passwordError}<p role="alert" class="text-[12px] font-bold [color:#a4492e]">
+			{#if passwordError}<p role="alert" class="text-[12px] font-bold text-[#a4492e]">
 					{passwordError}
 				</p>{/if}
 		</div>
-		<div class="flex justify-end gap-2 border-t [border-color:var(--line)] px-6 py-4">
+		<div class="flex justify-end gap-2 border-t border-(--line) px-6 py-4">
 			<button
 				type="button"
 				onclick={() => passwordDialog.close()}
 				disabled={isLoading}
-				class="min-h-10 rounded-[7px] border [border-color:var(--line)] px-4 text-[12px] font-extrabold hover:[background:#eef1eb]"
+				class="min-h-10 rounded-[7px] border border-(--line) px-4 text-[12px] font-extrabold hover:bg-[#eef1eb] cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 				>Annuler</button
 			>
 			<button
 				type="submit"
 				disabled={isLoading || !openingPassword}
-				class="min-h-10 rounded-[7px] [background:var(--accent)] px-4 text-[12px] font-extrabold text-white hover:[background:var(--accent-dark)] disabled:opacity-60"
+				class="min-h-10 rounded-[7px] bg-(--accent) px-4 text-[12px] font-extrabold text-white hover:bg-(--accent-dark) disabled:opacity-60 cursor-pointer disabled:cursor-not-allowed focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 				>{isLoading ? 'Ouverture…' : 'Ouvrir le PDF'}</button
 			>
 		</div>
 	</form>
 </dialog>
 
-<div class="home-shell min-h-[100vh] flex flex-col">
+<div class="home-shell min-h-screen flex flex-col">
 	<header
-		class="home-header h-[82px] p-[0_clamp(24px,_6.3vw,_104px)] [border-bottom:1px_solid_var(--line)] flex items-center justify-between [background:var(--paper)] max-[760px]:h-[69px]"
+		class="home-header h-20.5 p-[0_clamp(24px,6.3vw,104px)] border-b border-b-(--line) flex items-center justify-between bg-(--paper) max-[760px]:h-17.25"
 	>
 		<a
 			href="/"
-			class="brand [color:var(--ink)] inline-flex items-center gap-[12px] text-[24px] font-extrabold tracking-[-0.065em] [text-decoration:none]"
+			class="brand text-(--ink) inline-flex items-center gap-3 text-[24px] font-extrabold tracking-[-0.065em] no-underline cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 			aria-label="Inscribe, accueil"
 			><span
-				class="brand-mark inline-flex justify-center items-center w-[38px] h-[38px] rounded-[10px] [background:var(--accent)] text-white text-[27px] font-extrabold leading-[1] tracking-[-0.1em] pr-[3px] [&_span]:[color:#dfb394] [&.compact]:w-[32px] [&.compact]:h-[32px] [&.compact]:text-[23px] [&.compact]:rounded-[8px] [&.compact]:flex-none"
-				>i<span>.</span></span
+				class="brand-mark inline-flex justify-center items-center w-9.5 h-9.5 rounded-[10px] bg-(--accent) text-white text-[27px] font-extrabold leading-none -tracking-widest pr-0.75"
+				>i<span class="text-[#dfb394]">.</span></span
 			><span>inscribe</span></a
 		>
 		<span
-			class="header-note inline-flex items-center gap-[9px] [color:var(--muted-ink)] text-[12px] font-bold tracking-[0.025em] [&_svg]:[color:var(--accent)] max-[520px]:text-[0] max-[520px]:[&_svg]:w-[18px] max-[520px]:[&_svg]:h-[18px]"
-			><ShieldCheck size={16} strokeWidth={1.8} /> Espace de travail local</span
+			class="header-note inline-flex items-center gap-2.25 text-(--muted-ink) text-[12px] font-bold tracking-wide max-[520px]:text-[0]"
+			><ShieldCheck
+				class="text-(--accent) max-[520px]:h-4.5 max-[520px]:w-4.5"
+				size={16}
+				strokeWidth={1.8}
+			/> Espace de travail local</span
 		>
 	</header>
 	<main
-		class="home-main w-[min(100%_-_48px,_1200px)] m-[0_auto] flex-1 p-[clamp(46px,_6.5vw,_96px)_0_75px] max-[760px]:pt-[47px] max-[520px]:w-[calc(100%_-_32px)]"
+		class="home-main w-[min(100%-48px,1200px)] m-[0_auto] flex-1 p-[clamp(46px,6.5vw,96px)_0_75px] max-[760px]:pt-11.75 max-[520px]:w-[calc(100%-32px)]"
 	>
-		<section
-			class="welcome mb-[48px] [&_h1]:m-0 [&_h1]:max-w-[930px] [&_h1]:text-[clamp(42px,_5.5vw,_74px)] [&_h1]:leading-[1.13] [&_h1]:tracking-[-0.07em] [&_h1]:font-extrabold [&_h1_em]:not-italic [&_h1_em]:[color:var(--accent)] [&_p]:max-w-[560px] [&_p]:m-[24px_0_0] [&_p]:[color:var(--muted-ink)] [&_p]:text-[17px] [&_p]:leading-[1.7] max-[760px]:mb-[34px] max-[760px]:[&_p]:text-[15px] max-[520px]:[&_h1]:text-[clamp(36px,_10vw,_52px)] max-[520px]:[&_p]:mt-[16px]"
-			aria-labelledby="welcome-title"
-		>
+		<section class="welcome mb-12 max-[760px]:mb-8.5" aria-labelledby="welcome-title">
 			<div
-				class="eyebrow text-[11px] [color:var(--accent)] tracking-[0.15em] font-extrabold flex items-center gap-[10px] mb-[23px]"
+				class="eyebrow text-[11px] text-(--accent) tracking-[0.15em] font-extrabold flex items-center gap-2.5 mb-5.75"
 			>
-				<span class="eyebrow-line w-[24px] h-[2px] [background:var(--orange)]"></span> VOTRE ATELIER PDF
+				<span class="eyebrow-line w-6 h-0.5 bg-(--orange)"></span> VOTRE ATELIER PDF
 			</div>
-			<h1 id="welcome-title">Vos documents,<br /><em>entre de bonnes mains.</em></h1>
-			<p>Ouvrez un PDF, organisez ses pages et exportez votre travail en quelques gestes.</p>
+			<h1
+				id="welcome-title"
+				class="m-0 max-w-232.5 text-[clamp(42px,5.5vw,74px)] font-extrabold leading-[1.13] tracking-[-0.07em] max-[520px]:text-[clamp(36px,10vw,52px)]"
+			>
+				Vos documents,<br /><em class="not-italic text-(--accent)">entre de bonnes mains.</em>
+			</h1>
+			<p
+				class="mt-6 max-w-140 text-[17px] leading-[1.7] text-(--muted-ink) max-[760px]:text-[15px] max-[520px]:mt-4"
+			>
+				Ouvrez un PDF, organisez ses pages et exportez votre travail en quelques gestes.
+			</p>
 		</section>
 		<section
-			class="workspace-card grid grid-cols-[minmax(260px,_0.86fr)_minmax(320px,_1.14fr)] [border:1px_solid_var(--line)] rounded-[14px] [background:var(--paper)] [box-shadow:0_18px_55px_rgba(46,_55,_44,_0.045)] overflow-hidden max-[760px]:grid-cols-[1fr]"
+			class="workspace-card grid grid-cols-[minmax(260px,0.86fr)_minmax(320px,1.14fr)] border border-(--line) rounded-[14px] bg-(--paper) shadow-[0_18px_55px_rgba(46,55,44,0.045)] overflow-hidden max-[760px]:grid-cols-[1fr]"
 			aria-label="Ouvrir un document"
 		>
 			<div
-				class="workspace-copy p-[clamp(30px,_4vw,_56px)] flex flex-col items-start [&_h2]:m-[34px_0_15px] [&_h2]:text-[clamp(31px,_3vw,_45px)] [&_h2]:leading-[1.16] [&_h2]:tracking-[-0.055em] [&_h2]:font-extrabold [&_p]:m-0 [&_p]:max-w-[330px] [&_p]:[color:var(--muted-ink)] [&_p]:text-[15px] [&_p]:leading-[1.75] max-[760px]:p-[28px_27px_16px] max-[760px]:[&_h2]:mt-[17px]"
+				class="workspace-copy p-[clamp(30px,4vw,56px)] flex flex-col items-start max-[760px]:p-[28px_27px_16px]"
 			>
-				<span
-					class="section-index text-[11px] [color:var(--accent)] tracking-[0.15em] font-extrabold"
+				<span class="section-index text-[11px] text-(--accent) tracking-[0.15em] font-extrabold"
 					>01 / COMMENCER</span
 				>
-				<h2>Quel document ouvre-t-on ?</h2>
-				<p>
+				<h2
+					class="my-8.5 mb-3.75 text-[clamp(31px,3vw,45px)] font-extrabold leading-[1.16] tracking-[-0.055em] max-[760px]:mt-4.25"
+				>
+					Quel document ouvre-t-on ?
+				</h2>
+				<p class="m-0 max-w-82.5 text-[15px] leading-[1.75] text-(--muted-ink)">
 					Votre fichier reste sur cet appareil. Faites-le glisser ici ou choisissez-le dans vos
 					dossiers.
 				</p>
 				<div
-					class="file-assurance flex items-center gap-[9px] mt-auto pt-[40px] [color:var(--accent)] text-[12px] font-extrabold max-[760px]:pt-[20px]"
+					class="file-assurance flex items-center gap-2.25 mt-auto pt-10 text-(--accent) text-[12px] font-extrabold max-[760px]:pt-5"
 				>
 					<FileText size={17} strokeWidth={1.8} /> Fichiers PDF uniquement
 				</div>
 			</div>
 			<div
 				class:dragging={isDragging}
-				class="dropzone m-[12px] min-h-[345px] p-[30px_20px] [border:1.5px_dashed_#afc4b8] rounded-[9px] [background:#f1f5f0] flex items-center justify-center flex-col text-center [transition:background_0.18s,_border-color_0.18s] cursor-pointer [&:hover]:[background:#e7f0e8] [&:hover]:[border-color:var(--accent)] [&.dragging]:[background:#e7f0e8] [&.dragging]:[border-color:var(--accent)] [&_strong]:text-[19px] [&_strong]:tracking-[-0.025em] [&_>_span]:text-[12px] [&_>_span]:[color:var(--muted-ink)] [&_>_span]:m-[9px_0_16px] [&:hover_.primary-button]:[background:var(--accent-dark)] [&_small]:mt-[20px] [&_small]:[color:var(--muted-ink)] [&_small]:text-[11px] max-[760px]:min-h-[290px]"
+				class="dropzone m-3 min-h-86.25 p-[30px_20px] border-[1.5px] border-dashed border-[#afc4b8] rounded-[9px] bg-[#f1f5f0] flex items-center justify-center flex-col text-center transition-[background,border-color] duration-180 ease-linear cursor-pointer hover:bg-[#e7f0e8] hover:border-(--accent) [&.dragging]:bg-[#e7f0e8] [&.dragging]:border-(--accent) max-[760px]:min-h-72.5 disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 				role="button"
 				tabindex="0"
 				aria-label="Choisir un fichier PDF"
@@ -306,71 +313,79 @@
 				ondrop={handleDrop}
 			>
 				<div
-					class="dropzone-icon w-[65px] h-[65px] [border:1px_solid_#cfddd2] rounded-[17px] [background:#fffefa] [color:var(--accent)] grid place-items-center mb-[19px]"
+					class="dropzone-icon w-16.25 h-16.25 border border-[#cfddd2] rounded-[17px] bg-[#fffefa] text-(--accent) grid place-items-center mb-4.75"
 				>
 					<UploadCloud size={30} strokeWidth={1.6} />
 				</div>
-				<strong>{isLoading ? 'Ouverture du document…' : 'Déposez votre PDF ici'}</strong>
-				<span>ou</span>
-				<div
-					class="primary-button min-h-[44px] inline-flex items-center justify-center gap-[10px] p-[0_19px] border-0 rounded-[7px] [background:var(--accent)] text-white text-[13px] font-extrabold [transition:background_0.15s,_transform_0.15s] [&_svg:last-child]:ml-[12px]"
+				<strong class="text-[19px] tracking-tight"
+					>{isLoading ? 'Ouverture du document…' : 'Déposez votre PDF ici'}</strong
 				>
-					<FolderOpen size={18} strokeWidth={1.8} /> Parcourir les fichiers <ArrowRight size={17} />
+				<span class="my-2.25 mb-4 text-[12px] text-(--muted-ink)">ou</span>
+				<div
+					class="primary-button min-h-11 inline-flex items-center justify-center gap-2.5 p-[0_19px] border-0 rounded-[7px] bg-(--accent) text-white text-[13px] font-extrabold transition-[background,transform] duration-150 ease-linear hover:bg-(--accent-dark)"
+				>
+					<FolderOpen size={18} strokeWidth={1.8} /> Parcourir les fichiers <ArrowRight
+						class="ml-3"
+						size={17}
+					/>
 				</div>
-				<small>PDF uniquement · traitement sur votre appareil</small>
+				<small class="mt-5 text-[11px] text-(--muted-ink)"
+					>PDF uniquement · traitement sur votre appareil</small
+				>
 			</div>
 			<input
 				bind:this={input}
 				type="file"
 				accept=".pdf,application/pdf"
-				class="visually-hidden absolute w-[1px] h-[1px] p-0 m-[-1px] overflow-hidden [clip:rect(0,_0,_0,_0)] whitespace-nowrap border-0"
+				class="sr-only cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 				onchange={handleFileSelection}
 				aria-label="Sélectionner un fichier PDF"
 			/>
 		</section>
 		{#if error}<div
-				class="notice error mt-[16px] p-[13px_16px] rounded-[7px] text-[13px] [&.error]:[background:#fff0e8] [&.error]:[color:#8d3e27] [&.error]:[border:1px_solid_#e8c3b2]"
+				class="notice error mt-4 p-[13px_16px] rounded-[7px] border border-[#e8c3b2] bg-[#fff0e8] text-[#8d3e27] text-[13px]"
 				role="alert"
 			>
 				{error}
 			</div>{/if}
-		<section class="recent-section mt-[70px] max-[760px]:mt-[51px]" aria-labelledby="recent-title">
-			<div
-				class="section-heading flex justify-between [align-items:end] gap-[20px] mb-[21px] [&_h2]:m-[10px_0_0] [&_h2]:text-[25px] [&_h2]:leading-[1.2] [&_h2]:tracking-[-0.045em]"
-			>
+		<section class="recent-section mt-17.5 max-[760px]:mt-12.75" aria-labelledby="recent-title">
+			<div class="section-heading flex justify-between items-end gap-5 mb-5.25">
 				<div>
-					<span
-						class="section-index text-[11px] [color:var(--accent)] tracking-[0.15em] font-extrabold"
+					<span class="section-index text-[11px] text-(--accent) tracking-[0.15em] font-extrabold"
 						>02 / REPRENDRE</span
 					>
-					<h2 id="recent-title">Documents récents</h2>
+					<h2 id="recent-title" class="mt-2.5 mb-0 text-[25px] leading-[1.2] tracking-[-0.045em]">
+						Documents récents
+					</h2>
 				</div>
-				<span class="recent-count [color:var(--muted-ink)] text-[12px] font-bold pb-[3px]"
+				<span class="recent-count text-(--muted-ink) text-[12px] font-bold pb-0.75"
 					>{recentFiles.length} {recentFiles.length === 1 ? 'document' : 'documents'}</span
 				>
 			</div>
 			{#if recentFiles.length}
-				<div class="recent-list [border-top:1px_solid_var(--line)]">
+				<div class="recent-list border-t border-t-(--line)">
 					{#each recentFiles as record (record.id)}
 						<button
-							class="recent-row w-full flex items-center gap-[18px] p-[14px_5px] border-0 [border-bottom:1px_solid_var(--line)] bg-transparent text-left [transition:background_0.15s] [&:hover]:[background:#f0f1eb]"
+							class="recent-row w-full flex items-center gap-4.5 p-[14px_5px] border-0 border-b border-b-(--line) bg-transparent text-left transition-[background] duration-150 ease-linear hover:bg-[#f0f1eb] cursor-pointer disabled:cursor-not-allowed disabled:opacity-48 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-(--ring) motion-reduce:transition-none motion-reduce:animate-none"
 							type="button"
 							onclick={() => openRecent(record)}
 							disabled={isLoading}
 						>
 							<span
-								class="recent-file-icon flex-none grid place-items-center w-[46px] h-[52px] rounded-[4px] [background:#e5ece5] [color:var(--accent)]"
+								class="recent-file-icon flex-none grid place-items-center w-11.5 h-13 rounded-sm bg-[#e5ece5] text-(--accent)"
 								><FileText size={21} strokeWidth={1.6} /></span
 							>
-							<span
-								class="recent-file-info min-w-0 flex flex-col gap-[4px] [&_strong]:text-[14px] [&_strong]:overflow-hidden [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_small]:[color:var(--muted-ink)] [&_small]:text-[12px]"
-								><strong title={record.name}>{record.name}</strong><small
+							<span class="recent-file-info min-w-0 flex flex-col gap-1"
+								><strong
+									class="overflow-hidden text-[14px] text-ellipsis whitespace-nowrap"
+									title={record.name}>{record.name}</strong
+								><small class="text-[12px] text-(--muted-ink)"
 									>Ouvert le {formatDate(record.createdAt)}</small
 								></span
 							>
 							<ArrowRight
 								size={20}
-								class="recent-arrow [color:var(--accent)] ml-auto flex-none"
+								class="recent-arrow text-(--accent) ml-auto flex-none"
 								aria-hidden="true"
 							/>
 						</button>
@@ -378,22 +393,23 @@
 				</div>
 			{:else}
 				<div
-					class="recent-empty flex items-start gap-[16px] [border:1px_solid_var(--line)] rounded-[9px] p-[24px] [background:#fdfcf9] [color:var(--accent)] [&_strong]:[color:var(--ink)] [&_strong]:text-[14px] [&_p]:[color:var(--muted-ink)] [&_p]:m-[5px_0_0] [&_p]:text-[13px] [&_p]:leading-[1.6]"
+					class="recent-empty flex items-start gap-4 border border-(--line) rounded-[9px] p-6 bg-[#fdfcf9] text-(--accent)"
 				>
 					<Clock3 size={22} strokeWidth={1.6} />
 					<div>
-						<strong>Votre espace est prêt.</strong>
-						<p>Les documents ouverts apparaîtront ici pour les retrouver rapidement.</p>
+						<strong class="text-[14px] text-(--ink)">Votre espace est prêt.</strong>
+						<p class="mt-1.25 mb-0 text-[13px] leading-[1.6] text-(--muted-ink)">
+							Les documents ouverts apparaîtront ici pour les retrouver rapidement.
+						</p>
 					</div>
 				</div>
 			{/if}
 		</section>
 	</main>
 	<footer
-		class="home-footer min-h-[64px] p-[0_clamp(24px,_6.3vw,_104px)] flex justify-between items-center gap-[12px] [border-top:1px_solid_var(--line)] [color:var(--muted-ink)] text-[11px] max-[520px]:[&_span:last-child]:hidden"
+		class="home-footer min-h-16 p-[0_clamp(24px,6.3vw,104px)] flex justify-between items-center gap-3 border-t border-t-(--line) text-(--muted-ink) text-[11px]"
 	>
-		<span
-			>Inscribe <span class="footer-dot [color:var(--orange)] m-[0_4px]">✳</span> Édition PDF</span
-		><span>Un espace clair pour vos idées.</span>
+		<span>Inscribe <span class="footer-dot text-(--orange) m-[0_4px]">✳</span> Édition PDF</span
+		><span class="max-[520px]:hidden">Un espace clair pour vos idées.</span>
 	</footer>
 </div>

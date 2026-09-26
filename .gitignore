@@ -11,3 +11,6 @@ vite.config.ts.timestamp-*
 .vscode
 /static/ocr/
 /static/pdfjs/
+/test-results/
+/playwright-report/
+/.pnpm-store/

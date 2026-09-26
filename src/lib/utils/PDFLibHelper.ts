@@ -1,17 +1,21 @@
 import { PDFDocument } from 'pdf-lib';
-import { fileSession } from '../../stores/FileStore.svelte';
+import { downloadBlob } from './Download';
 
 /**
  * Load a PDF file from a Blob, usable with PDFLib
  */
-export const load = async (file: Blob) => {
-	const fileArrayBuffer = await file.arrayBuffer();
+export const load = async (file: Blob): Promise<PDFDocument> =>
+	PDFDocument.load(await file.arrayBuffer());
 
-	return await PDFDocument.load(fileArrayBuffer);
-};
+export const cloneDocument = async (source: PDFDocument): Promise<PDFDocument> =>
+	PDFDocument.load(await source.save());
 
-export const save = async (password?: string) => {
-	let pdfBytes = await fileSession.updatedFile.save();
+export const save = async (
+	source: PDFDocument,
+	filename: string,
+	password?: string
+): Promise<void> => {
+	let pdfBytes = await source.save();
 	if (password) {
 		const { encryptPDF } = await import('@pdfsmaller/pdf-encrypt');
 		pdfBytes = await encryptPDF(pdfBytes, password);
@@ -19,14 +23,5 @@ export const save = async (password?: string) => {
 
 	const fileBlob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
 
-	const link = document.createElement('a');
-	link.href = URL.createObjectURL(fileBlob);
-	link.download = password
-		? fileSession.fileName.replace(/\.pdf$/i, '') + '-protege.pdf'
-		: fileSession.fileName;
-
-	link.click();
-	link.remove();
-
-	setTimeout(() => URL.revokeObjectURL(link.href), 7000);
+	downloadBlob(fileBlob, password ? filename.replace(/\.pdf$/i, '') + '-protege.pdf' : filename);
 };

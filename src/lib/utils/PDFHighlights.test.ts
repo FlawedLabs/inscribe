@@ -6,6 +6,36 @@ import { addHighlight, listHighlights, removeHighlight, type PDFQuad } from './P
 const quad: PDFQuad = [30, 200, 120, 200, 30, 184, 120, 184];
 
 describe('PDF highlights', () => {
+	it('skips malformed imported bounds and uses a fallback for invalid colors', async () => {
+		const source = await PDFDocument.create();
+		const page = source.addPage();
+		for (const points of ['invalid', [30, 'invalid', 120, 200, 30, 184, 120, 184], [...quad, 42]]) {
+			page.node.addAnnot(
+				source.context.register(
+					source.context.obj({
+						Type: 'Annot',
+						Subtype: 'Highlight',
+						QuadPoints: points,
+						C: [1, 0, 0]
+					})
+				)
+			);
+		}
+		page.node.addAnnot(
+			source.context.register(
+				source.context.obj({
+					Type: 'Annot',
+					Subtype: 'Highlight',
+					QuadPoints: quad,
+					C: 'invalid'
+				})
+			)
+		);
+		const reopened = await PDFDocument.load(await source.save());
+		expect(listHighlights(reopened)).toMatchObject([{ page: 1, color: '#f6d76b', quads: [quad] }]);
+		expect(listHighlights(reopened)).toHaveLength(1);
+	});
+
 	it('saves color and text bounds in a native annotation', async () => {
 		const original = await PDFDocument.create();
 		original.addPage([300, 400]);

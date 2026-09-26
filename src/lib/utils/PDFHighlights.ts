@@ -1,4 +1,6 @@
-import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNumber, PDFRef, PDFString } from 'pdf-lib';
+import { PDFDict, PDFDocument, PDFName, PDFRef, PDFString, type PDFObject } from 'pdf-lib';
+import { readNumberArray } from './PDFAnnotations';
+import { cloneDocument } from './PDFLibHelper';
 
 export type PDFQuad = [number, number, number, number, number, number, number, number];
 export type PDFHighlight = {
@@ -13,11 +15,9 @@ const hexChannel = (value: number) =>
 		.toString(16)
 		.padStart(2, '0');
 
-const colorFromArray = (array?: PDFArray) => {
-	if (!array) return '#f6d76b';
-	const values = Array.from({ length: array.size() }, (_, index) =>
-		array.lookup(index, PDFNumber).asNumber()
-	);
+const colorFromArray = (array?: PDFObject) => {
+	const values = readNumberArray(array);
+	if (!values) return '#f6d76b';
 	const channels = values.length === 1 ? [values[0], values[0], values[0]] : values;
 	if (channels.length < 3) return '#f6d76b';
 	return `#${channels.slice(0, 3).map(hexChannel).join('')}`;
@@ -38,20 +38,16 @@ export const listHighlights = (document: PDFDocument): PDFHighlight[] => {
 			const annotation = document.context.lookup(ref);
 			if (!(ref instanceof PDFRef) || !(annotation instanceof PDFDict)) continue;
 			if (annotation.lookup(PDFName.of('Subtype'))?.toString() !== '/Highlight') continue;
-			const quadPoints = annotation.lookupMaybe(PDFName.of('QuadPoints'), PDFArray);
-			if (!quadPoints || quadPoints.size() < 8) continue;
+			const quadPoints = readNumberArray(annotation.lookup(PDFName.of('QuadPoints')));
+			if (!quadPoints?.length || quadPoints.length % 8 !== 0) continue;
 			const quads: PDFQuad[] = [];
-			for (let point = 0; point + 7 < quadPoints.size(); point += 8) {
-				quads.push(
-					Array.from({ length: 8 }, (_, offset) =>
-						quadPoints.lookup(point + offset, PDFNumber).asNumber()
-					) as PDFQuad
-				);
+			for (let point = 0; point < quadPoints.length; point += 8) {
+				quads.push(quadPoints.slice(point, point + 8) as PDFQuad);
 			}
 			highlights.push({
 				id: ref.toString(),
 				page,
-				color: colorFromArray(annotation.lookupMaybe(PDFName.of('C'), PDFArray)),
+				color: colorFromArray(annotation.lookup(PDFName.of('C'))),
 				quads
 			});
 		}
@@ -71,7 +67,7 @@ export const addHighlight = async (
 	)
 		throw new Error('A highlight needs valid text bounds.');
 	const channels = colorChannels(color);
-	const result = await PDFDocument.load(await source.save());
+	const result = await cloneDocument(source);
 	const coordinates = quads.flat();
 	const xs = coordinates.filter((_, index) => index % 2 === 0);
 	const ys = coordinates.filter((_, index) => index % 2 === 1);
@@ -90,7 +86,7 @@ export const addHighlight = async (
 };
 
 export const removeHighlight = async (source: PDFDocument, id: string): Promise<PDFDocument> => {
-	const result = await PDFDocument.load(await source.save());
+	const result = await cloneDocument(source);
 	for (let page = 0; page < result.getPageCount(); page++) {
 		const annotations = result.getPage(page).node.Annots();
 		if (!annotations) continue;

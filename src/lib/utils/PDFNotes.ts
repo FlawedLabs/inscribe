@@ -1,13 +1,6 @@
-import {
-	PDFArray,
-	PDFDict,
-	PDFDocument,
-	PDFHexString,
-	PDFName,
-	PDFNumber,
-	PDFRef,
-	PDFString
-} from 'pdf-lib';
+import { PDFDict, PDFDocument, PDFHexString, PDFName, PDFRef, PDFString } from 'pdf-lib';
+import { readNumberArray } from './PDFAnnotations';
+import { cloneDocument } from './PDFLibHelper';
 
 export type PDFNote = {
 	id: string;
@@ -30,18 +23,19 @@ export const listNotes = (document: PDFDocument): PDFNote[] => {
 			const annotation = document.context.lookup(ref);
 			if (!(ref instanceof PDFRef) || !(annotation instanceof PDFDict)) continue;
 			if (annotation.lookup(PDFName.of('Subtype'))?.toString() !== '/Text') continue;
-			const rect = annotation.lookupMaybe(PDFName.of('Rect'), PDFArray);
-			const contents = annotation.lookupMaybe(PDFName.of('Contents'), PDFString, PDFHexString);
-			if (!rect || rect.size() < 4 || !contents) continue;
-			const x = rect.lookup(0, PDFNumber).asNumber();
-			const y = rect.lookup(1, PDFNumber).asNumber();
+			const rect = readNumberArray(annotation.lookup(PDFName.of('Rect')));
+			const contents = annotation.lookup(PDFName.of('Contents'));
+			if (
+				rect?.length !== 4 ||
+				!(contents instanceof PDFString || contents instanceof PDFHexString)
+			)
+				continue;
+			const [x, y] = rect;
 			notes.push({ id: ref.toString(), page, text: contents.decodeText(), x, y });
 		}
 	}
 	return notes;
 };
-
-const clone = async (source: PDFDocument) => PDFDocument.load(await source.save());
 
 export const addNote = async (
 	source: PDFDocument,
@@ -51,7 +45,8 @@ export const addNote = async (
 	text: string
 ): Promise<PDFDocument> => {
 	if (!text.trim()) throw new Error('A note cannot be empty.');
-	const result = await clone(source);
+	if (![x, y].every(Number.isFinite)) throw new Error('A note needs valid coordinates.');
+	const result = await cloneDocument(source);
 	const page = result.getPage(pageNumber - 1);
 	const annotation = result.context.obj({
 		Type: 'Annot',
@@ -73,7 +68,7 @@ export const updateNote = async (
 	text: string
 ): Promise<PDFDocument> => {
 	if (!text.trim()) throw new Error('A note cannot be empty.');
-	const result = await clone(source);
+	const result = await cloneDocument(source);
 	for (const note of listNotes(result)) {
 		if (note.id !== id) continue;
 		const ref = findNoteRef(result, note.page, id);
@@ -96,7 +91,7 @@ const findNoteRef = (document: PDFDocument, page: number, id: string) => {
 };
 
 export const removeNote = async (source: PDFDocument, id: string): Promise<PDFDocument> => {
-	const result = await clone(source);
+	const result = await cloneDocument(source);
 	for (let page = 1; page <= result.getPageCount(); page++) {
 		const array = annotations(result, page);
 		if (!array) continue;
