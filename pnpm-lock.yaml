@@ -35,6 +35,9 @@ importers:
       '@tauri-apps/plugin-shell':
         specifier: 2.3.6
         version: 2.3.6
+      '@vercel/analytics':
+        specifier: ^2.0.1
+        version: 2.0.1(@sveltejs/kit@3.0.0-next.29(@sveltejs/vite-plugin-svelte@7.3.1(svelte@5.57.1)(vite@8.3.1(@types/node@26.6.2)(jiti@2.7.0)))(svelte@5.57.1)(typescript@6.0.3)(vite@8.3.1(@types/node@26.6.2)(jiti@2.7.0)))(svelte@5.57.1)
       bits-ui:
         specifier: ^2.19.3
         version: 2.19.3(@internationalized/date@3.12.4)(@sveltejs/kit@3.0.0-next.29(@sveltejs/vite-plugin-svelte@7.3.1(svelte@5.57.1)(vite@8.3.1(@types/node@26.6.2)(jiti@2.7.0)))(svelte@5.57.1)(typescript@6.0.3)(vite@8.3.1(@types/node@26.6.2)(jiti@2.7.0)))(svelte@5.57.1)
@@ -595,6 +598,35 @@ packages:
 
   '@types/node@26.6.2':
     resolution: {integrity: sha512-X1P21scMv4zGKLYqjdGjaKa7COa0RKVYYZZN/NfvLQ1JegxFhdhpZG/Lyn8AXx6CDUavKAd11v6BvfpkDByK8g==}
+
+  '@vercel/analytics@2.0.1':
+    resolution: {integrity: sha512-MTQG6V9qQrt1tsDeF+2Uoo5aPjqbVPys1xvnIftXSJYG2SrwXRHnqEvVoYID7BTruDz4lCd2Z7rM1BdkUehk2g==}
+    peerDependencies:
+      '@remix-run/react': ^2
+      '@sveltejs/kit': ^1 || ^2
+      next: '>= 13'
+      nuxt: '>= 3'
+      react: ^18 || ^19 || ^19.0.0-rc
+      svelte: '>= 4'
+      vue: ^3
+      vue-router: ^4
+    peerDependenciesMeta:
+      '@remix-run/react':
+        optional: true
+      '@sveltejs/kit':
+        optional: true
+      next:
+        optional: true
+      nuxt:
+        optional: true
+      react:
+        optional: true
+      svelte:
+        optional: true
+      vue:
+        optional: true
+      vue-router:
+        optional: true
 
   '@vitest/mocker@5.0.2':
     resolution: {integrity: sha512-Z5FS00Q1SJHkB35xATsmWGdQ5WA1/0MV3CDjqyv7GavHv1OfOj145MNfHOlHk7QLes21dKFDHr8EO2zvL+9WGA==}
@@ -1594,6 +1626,11 @@ snapshots:
   '@types/node@26.6.2':
     dependencies:
       undici-types: 8.9.0
+
+  '@vercel/analytics@2.0.1(@sveltejs/kit@3.0.0-next.29(@sveltejs/vite-plugin-svelte@7.3.1(svelte@5.57.1)(vite@8.3.1(@types/node@26.6.2)(jiti@2.7.0)))(svelte@5.57.1)(typescript@6.0.3)(vite@8.3.1(@types/node@26.6.2)(jiti@2.7.0)))(svelte@5.57.1)':
+    optionalDependencies:
+      '@sveltejs/kit': 3.0.0-next.29(@sveltejs/vite-plugin-svelte@7.3.1(svelte@5.57.1)(vite@8.3.1(@types/node@26.6.2)(jiti@2.7.0)))(svelte@5.57.1)(typescript@6.0.3)(vite@8.3.1(@types/node@26.6.2)(jiti@2.7.0))
+      svelte: 5.57.1
 
   '@vitest/mocker@5.0.2(vite@8.3.1(@types/node@26.6.2)(jiti@2.7.0))':
     dependencies:
