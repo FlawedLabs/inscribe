@@ -25,3 +25,17 @@ it('embeds a canonical Base64 updater public key without line wrapping', () => {
 	expect(key.length).toBe(42);
 	expect(key.subarray(0, 2).toString()).toBe('Ed');
 });
+
+it('keeps installed JavaScript and locked Rust Tauri packages on matching major/minor versions', () => {
+	const lock = read('src-tauri/Cargo.lock');
+	for (const [crate, npm] of [
+		['tauri', '@tauri-apps/api'],
+		['tauri-plugin-updater', '@tauri-apps/plugin-updater'],
+		['tauri-plugin-process', '@tauri-apps/plugin-process'],
+		['tauri-plugin-shell', '@tauri-apps/plugin-shell']
+	]) {
+		const rust = lock.match(new RegExp(`name = "${crate}"\\r?\\nversion = "([^"]+)"`))?.[1];
+		const js = JSON.parse(read(`node_modules/${npm}/package.json`)).version;
+		expect(rust?.split('.').slice(0, 2), crate).toEqual(js.split('.').slice(0, 2));
+	}
+});

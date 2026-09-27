@@ -15,7 +15,7 @@
 
 - Dépôt de publication : `FlawedLabs/inscribe`.
 - Le workflow `.github/workflows/release.yml` se déclenche au push d’un tag `v*`. Un simple push de branche ne publie pas de version.
-- Le tag doit correspondre exactement à la version de l’application : version `0.1.1`, tag `v0.1.1`. Le workflow utilise `v__VERSION__` pour nommer la release ; un décalage entre le tag et la version peut empêcher sa publication correcte.
+- Le tag doit correspondre exactement à la version de l’application : version `0.1.3`, tag `v0.1.3`. Le workflow utilise `v__VERSION__` pour nommer la release ; un décalage entre le tag et la version peut empêcher sa publication correcte.
 - Les builds couvrent Windows, Linux, macOS Intel (`x86_64-apple-darwin`) et macOS Apple Silicon (`aarch64-apple-darwin`). Ils déposent les installateurs, les artefacts de mise à jour et leurs signatures dans une release en brouillon. Le job `publish` publie cette release uniquement lorsque tous les builds réussissent.
 - `bundle.createUpdaterArtifacts` doit rester activé dans `src-tauri/tauri.conf.json`. La clé publique de vérification est dans `plugins.updater.pubkey`.
 - L’application consulte `https://github.com/FlawedLabs/inscribe/releases/latest/download/latest.json`. Ce canal est destiné aux releases stables publiées, pas aux brouillons ni aux préversions.
@@ -32,22 +32,25 @@ Une demande explicite de publier une release autorise les commits, les pushes et
 
    Exécuter aussi `pnpm tauri info` et vérifier que chaque paquet Tauri JavaScript et son crate Rust ont les mêmes versions majeures et mineures (API/Tauri, plugins updater et process notamment). `cargo check` et le build web seuls ne détectent pas cette incompatibilité ; `tauri build` refuse de construire dans ce cas.
 
-   La clé publique dans `plugins.updater.pubkey` doit être un encodage Base64 canonique sur une seule ligne. Le texte Minisign décodé contient ses propres sauts de ligne ; ne pas les supprimer. Les tests `ReleaseConfig.test.ts` contrôlent ce format et la cohérence des versions. Si la configuration de signature change et qu’une copie locale de la clé privée est disponible, signer un fichier de test et vérifier sa signature avec la clé publique embarquée avant publication.
+   La clé publique dans `plugins.updater.pubkey` doit être un encodage Base64 canonique sur une seule ligne. Le texte Minisign décodé contient ses propres sauts de ligne ; ne pas les supprimer. Les tests `ReleaseConfig.test.ts` contrôlent ce format, la cohérence des versions et la compatibilité des paquets JavaScript/Rust installés. Si la configuration de signature change et qu’une copie locale de la clé privée est disponible, signer un fichier de test et vérifier sa signature avec la clé publique embarquée avant publication.
 
 4. Commiter les changements destinés à la release avec un message explicite, puis pousser le commit sur la branche appropriée. Le commit taggé doit contenir le workflow et tous les changements nécessaires ; les fichiers non commités ne seront pas construits par GitHub Actions. Respecter les protections et le parcours de revue du dépôt s’ils sont configurés.
 5. Créer le tag correspondant sur le commit retenu et le pousser. Exemple, à adapter à la version choisie :
 
    ```sh
-   git tag -a v0.1.1 -m "Inscribe v0.1.1"
-   git push origin v0.1.1
+   git tag -a v0.1.3 -m "Inscribe v0.1.3"
+   git push origin v0.1.3
    ```
 
 6. Suivre le workflow **Release** dans GitHub Actions. Utiliser par exemple `gh run list --repo FlawedLabs/inscribe --workflow release.yml`, puis `gh run watch <run-id> --repo FlawedLabs/inscribe`. Vérifier que l’exécution correspond au tag et au commit poussés. Attendre le succès de tous les builds et du job `publish` avant d’annoncer la publication.
 7. Contrôler la release avec `gh release view <tag> --repo FlawedLabs/inscribe`. Vérifier qu’elle est publiée, que les installateurs et artefacts signés des quatre cibles sont présents et que `latest.json` est accessible via l’URL configurée dans l’application. Vérifier sa version, ses entrées de plateformes, ses signatures et les URL de téléchargement. Pour valider une mise à jour réelle, utiliser une ancienne version signée équipée de l’updater ; indiquer clairement si cette vérification sur une application installée n’a pas pu être effectuée.
 8. Rapporter la version, le tag, le commit, le lien de la release, le résultat du workflow et les vérifications réalisées. En cas d’échec, consulter les logs et corriger la cause ; ne pas publier manuellement une release incomplète. Ne pas déplacer ni réutiliser le tag d’une version déjà publiée : publier la correction avec un nouveau numéro de version.
 
+   Si seul le job `publish` échoue après le succès des quatre builds, corriger le workflow et vérifier tous les artefacts et le manifeste du brouillon. La demande de release autorise alors à terminer la publication de ce brouillon complet avec `gh release edit <tag> --repo FlawedLabs/inscribe --draft=false`. Indiquer dans le compte rendu que les builds ont réussi et que la publication a été terminée séparément. Toujours préciser `--repo` dans un job sans checkout.
+
 ### Distribution aux utilisateurs
 
+- Première release stable équipée de l’updater : `v0.1.2`, commit `ad75969f75665a1c0d30ea709b4a1385be442744`. Les quatre builds ont réussi ; la publication a été terminée séparément après correction de l’absence de `--repo` dans le job `publish`.
 - L’accueil web récupère les installateurs de la dernière release stable via l’API publique GitHub. Vérifier après publication que le bouton pointe vers le bon fichier pour Windows et Linux, et que le choix Apple Silicon / Intel fonctionne sur macOS. La détection de l’OS reste une suggestion : conserver le sélecteur manuel et le lien « Tous les installateurs ». Ne pas proposer d’installateur desktop sur mobile ni dans l’application Tauri déjà installée.
 - La signature des artefacts de mise à jour avec la clé Tauri ne remplace pas la signature de code Windows ou la signature et la notarisation Apple. Le workflow initial ne configure pas ces certificats OS ; ne pas annoncer les installateurs comme notarifiés ou approuvés par ces systèmes.
 - Les installations antérieures à l’ajout de l’updater doivent installer manuellement la première version signée depuis GitHub Releases. Elles ne peuvent pas recevoir automatiquement le mécanisme qu’elles ne contiennent pas encore.

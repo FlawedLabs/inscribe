@@ -10,9 +10,9 @@ Sur l’accueil web, Inscribe propose l’installateur de la dernière release s
 
 L’application vérifie les nouvelles versions au démarrage et périodiquement. Lorsqu’une version est disponible, elle se télécharge en arrière-plan. Une notification permet ensuite de l’installer en un clic ; l’application redémarre, donc exportez vos changements avant de lancer l’installation.
 
-Les versions sont publiées sur GitHub en poussant un tag `v` correspondant à la version dans `package.json`, `src-tauri/Cargo.toml` et `src-tauri/tauri.conf.json` (par exemple `v0.1.0`). Le workflow construit les installateurs et leurs signatures de mise à jour pour macOS, Windows et Linux, puis publie la version. Configurez le secret GitHub Actions `TAURI_SIGNING_PRIVATE_KEY` avec la clé privée créée par `pnpm tauri signer generate`. La clé publique de vérification est dans `src-tauri/tauri.conf.json` ; conservez la clé privée en lieu sûr et ne la commitez jamais.
+Les versions sont publiées sur GitHub en poussant un tag `v` correspondant à la version dans `package.json`, `src-tauri/Cargo.toml` et `src-tauri/tauri.conf.json` (par exemple `v0.1.3`). Le workflow construit les installateurs et leurs signatures de mise à jour pour macOS, Windows et Linux, puis publie la version. Configurez le secret GitHub Actions `TAURI_SIGNING_PRIVATE_KEY` avec la clé privée créée par `pnpm tauri signer generate`. La clé publique de vérification est dans `src-tauri/tauri.conf.json` ; conservez la clé privée en lieu sûr et ne la commitez jamais.
 
-Les installations antérieures à l’activation du mécanisme de mise à jour doivent installer manuellement la première version signée. Les versions suivantes pourront être installées depuis l’application.
+La première release stable équipée de ce mécanisme est [v0.1.2](https://github.com/FlawedLabs/inscribe/releases/tag/v0.1.2). Les installations antérieures doivent installer manuellement cette première version signée. Les versions suivantes pourront être installées depuis l’application.
 
 ## Démarrer
 
