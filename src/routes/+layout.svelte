@@ -7,11 +7,11 @@
 	import Notifications from '#lib/components/Notifications.svelte';
 	import { Tooltip } from 'bits-ui';
 	import { dev } from '$app/env';
-	import { inject } from '@vercel/analytics';
+	import { injectAnalytics } from '@vercel/analytics/sveltekit';
 
 	let { children } = $props();
 
-	inject({ mode: dev ? 'development' : 'production' });
+	injectAnalytics({ mode: dev ? 'development' : 'production' });
 </script>
 
 <Tooltip.Provider delayDuration={300} skipDelayDuration={150} ignoreNonKeyboardFocus>
