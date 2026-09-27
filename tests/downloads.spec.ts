@@ -82,5 +82,9 @@ test('GitHub failure can be retried and a missing release never produces a broke
 	await page.goto('/');
 	await page.getByRole('button', { name: 'Réessayer' }).click();
 	await expect(page.getByText('Les installateurs seront bientôt disponibles.')).toBeVisible();
+	await expect(page.getByRole('link', { name: 'Tous les installateurs' })).toHaveAttribute(
+		'href',
+		'https://github.com/FlawedLabs/inscribe/releases'
+	);
 	await expect(page.getByRole('link', { name: /Télécharger Inscribe/ })).toHaveCount(0);
 });

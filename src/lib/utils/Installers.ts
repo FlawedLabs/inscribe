@@ -1,6 +1,6 @@
 export type InstallerTarget = 'windows' | 'linux' | 'mac-arm' | 'mac-intel';
 export type VisitorOS = 'windows' | 'linux' | 'mac' | 'mobile' | 'unknown';
-export const releasesUrl = 'https://github.com/FlawedLabs/inscribe/releases/latest';
+export const releasesUrl = 'https://github.com/FlawedLabs/inscribe/releases';
 export const releaseApi = 'https://api.github.com/repos/FlawedLabs/inscribe/releases/latest';
 
 export function detectVisitorOS(userAgent: string, platform = '', maxTouchPoints = 0): VisitorOS {

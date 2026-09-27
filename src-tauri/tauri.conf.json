@@ -1,6 +1,6 @@
 {
 	"productName": "inscribe",
-	"version": "0.1.1",
+	"version": "0.1.2",
 	"identifier": "com.flawedlabs.inscribe",
 	"build": {
 		"beforeDevCommand": "pnpm dev",
@@ -34,7 +34,7 @@
 	},
 	"plugins": {
 		"updater": {
-			"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDczRjgyNTc3ODVGRDBBQzgK\nUldUSUN2MkZkeVg0YzFtQ3lsNHFTZ1g4Q0FFSnd5NCt5WWZvbE5iL01SV1NBZUVTaDUyQ1JxeVkK",
+			"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDczRjgyNTc3ODVGRDBBQzgKUldUSUN2MkZkeVg0YzFtQ3lsNHFTZ1g4Q0FFSnd5NCt5WWZvbE5iL01SV1NBZUVTaDUyQ1JxeVkK",
 			"endpoints": ["https://github.com/FlawedLabs/inscribe/releases/latest/download/latest.json"]
 		}
 	}
