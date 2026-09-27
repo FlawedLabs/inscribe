@@ -5,6 +5,7 @@
 	import '@fontsource/mulish/700.css';
 	import '../app.css';
 	import Notifications from '#lib/components/Notifications.svelte';
+	import UpdateNotice from '#lib/components/UpdateNotice.svelte';
 	import { Tooltip } from 'bits-ui';
 	import { dev } from '$app/env';
 	import { inject } from '@vercel/analytics';
@@ -18,3 +19,4 @@
 	{@render children?.()}
 </Tooltip.Provider>
 <Notifications />
+<UpdateNotice />

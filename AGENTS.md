@@ -9,6 +9,46 @@
 - Vérifie les changements d’interface dans un navigateur avec un PDF représentatif. Contrôle aussi les états de chargement et d’erreur, le clavier et une largeur mobile.
 - Applique les consignes de conception ci-dessous à toute création ou modification d’interface. Elles reprennent intégralement le document UI/UX établi pour ce projet.
 
+## Releases et mises à jour automatiques
+
+### Fonctionnement et configuration
+
+- Dépôt de publication : `FlawedLabs/inscribe`.
+- Le workflow `.github/workflows/release.yml` se déclenche au push d’un tag `v*`. Un simple push de branche ne publie pas de version.
+- Le tag doit correspondre exactement à la version de l’application : version `0.1.1`, tag `v0.1.1`. Le workflow utilise `v__VERSION__` pour nommer la release ; un décalage entre le tag et la version peut empêcher sa publication correcte.
+- Les builds couvrent Windows, Linux, macOS Intel (`x86_64-apple-darwin`) et macOS Apple Silicon (`aarch64-apple-darwin`). Ils déposent les installateurs, les artefacts de mise à jour et leurs signatures dans une release en brouillon. Le job `publish` publie cette release uniquement lorsque tous les builds réussissent.
+- `bundle.createUpdaterArtifacts` doit rester activé dans `src-tauri/tauri.conf.json`. La clé publique de vérification est dans `plugins.updater.pubkey`.
+- L’application consulte `https://github.com/FlawedLabs/inscribe/releases/latest/download/latest.json`. Ce canal est destiné aux releases stables publiées, pas aux brouillons ni aux préversions.
+- Le secret GitHub Actions `TAURI_SIGNING_PRIVATE_KEY` a été configuré pour ce dépôt. Avant une release, vérifier sa présence avec `gh secret list --repo FlawedLabs/inscribe`, sans afficher de valeur privée. `GITHUB_TOKEN` est fourni automatiquement par GitHub Actions. `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` est nécessaire uniquement si la clé privée est protégée par un mot de passe ; la clé initiale a été créée sans mot de passe.
+- Ne jamais commiter, afficher dans les logs ou intégrer au frontend la clé privée. Conserver une sauvegarde durable et sécurisée hors du dépôt ; un fichier temporaire ne constitue pas une sauvegarde. Ne pas régénérer ni remplacer la paire de clés pour une release ordinaire : les applications déjà installées vérifient les mises à jour avec la clé publique embarquée.
+
+### Procédure à suivre lorsqu’une release est demandée
+
+Une demande explicite de publier une release autorise les commits, les pushes et le tag nécessaires à cette release. Une demande de développement ou de documentation seule ne déclenche pas de publication. Lorsque la publication est autorisée, effectuer toute la procédure et suivre son résultat sur GitHub.
+
+1. Examiner `git status`, la branche courante, le dépôt distant et les dernières releases. Vérifier l’authentification avec `gh auth status --hostname github.com`. Ne pas inclure des changements utilisateur sans rapport avec la release. Vérifier que le tag prévu n’existe ni localement ni sur le dépôt distant et que la version est supérieure à la dernière version stable publiée.
+2. Choisir la version demandée, ou une version SemVer cohérente avec les changements. Synchroniser cette version dans `package.json`, `src-tauri/Cargo.toml` et `src-tauri/tauri.conf.json`. Mettre également à jour l’entrée du paquet `inscribe` dans `src-tauri/Cargo.lock` au moyen de Cargo, et conserver les fichiers de verrouillage cohérents avec leurs manifests. La première version prévue avec ce mécanisme est `0.1.0` ; pour les suivantes, utiliser un nouveau numéro, par exemple `0.1.1`.
+3. Vérifier le workflow, le secret de signature et la configuration de l’updater. Exécuter `pnpm check`, `pnpm lint`, `pnpm build` et `cargo check --manifest-path src-tauri/Cargo.toml`, ainsi que les tests unitaires et d’intégration pertinents selon le code modifié. Pour des changements d’interface, appliquer aussi les vérifications navigateur décrites dans ce fichier. Corriger les erreurs avant de pousser le tag.
+4. Commiter les changements destinés à la release avec un message explicite, puis pousser le commit sur la branche appropriée. Le commit taggé doit contenir le workflow et tous les changements nécessaires ; les fichiers non commités ne seront pas construits par GitHub Actions. Respecter les protections et le parcours de revue du dépôt s’ils sont configurés.
+5. Créer le tag correspondant sur le commit retenu et le pousser. Exemple, à adapter à la version choisie :
+
+   ```sh
+   git tag -a v0.1.1 -m "Inscribe v0.1.1"
+   git push origin v0.1.1
+   ```
+
+6. Suivre le workflow **Release** dans GitHub Actions. Utiliser par exemple `gh run list --repo FlawedLabs/inscribe --workflow release.yml`, puis `gh run watch <run-id> --repo FlawedLabs/inscribe`. Vérifier que l’exécution correspond au tag et au commit poussés. Attendre le succès de tous les builds et du job `publish` avant d’annoncer la publication.
+7. Contrôler la release avec `gh release view <tag> --repo FlawedLabs/inscribe`. Vérifier qu’elle est publiée, que les installateurs et artefacts signés des quatre cibles sont présents et que `latest.json` est accessible via l’URL configurée dans l’application. Vérifier sa version, ses entrées de plateformes, ses signatures et les URL de téléchargement. Pour valider une mise à jour réelle, utiliser une ancienne version signée équipée de l’updater ; indiquer clairement si cette vérification sur une application installée n’a pas pu être effectuée.
+8. Rapporter la version, le tag, le commit, le lien de la release, le résultat du workflow et les vérifications réalisées. En cas d’échec, consulter les logs et corriger la cause ; ne pas publier manuellement une release incomplète. Ne pas déplacer ni réutiliser le tag d’une version déjà publiée : publier la correction avec un nouveau numéro de version.
+
+### Distribution aux utilisateurs
+
+- L’accueil web récupère les installateurs de la dernière release stable via l’API publique GitHub. Vérifier après publication que le bouton pointe vers le bon fichier pour Windows et Linux, et que le choix Apple Silicon / Intel fonctionne sur macOS. La détection de l’OS reste une suggestion : conserver le sélecteur manuel et le lien « Tous les installateurs ». Ne pas proposer d’installateur desktop sur mobile ni dans l’application Tauri déjà installée.
+- La signature des artefacts de mise à jour avec la clé Tauri ne remplace pas la signature de code Windows ou la signature et la notarisation Apple. Le workflow initial ne configure pas ces certificats OS ; ne pas annoncer les installateurs comme notarifiés ou approuvés par ces systèmes.
+- Les installations antérieures à l’ajout de l’updater doivent installer manuellement la première version signée depuis GitHub Releases. Elles ne peuvent pas recevoir automatiquement le mécanisme qu’elles ne contiennent pas encore.
+- Dans les builds de production Tauri équipés de l’updater, l’application vérifie les mises à jour au démarrage puis toutes les six heures. Une version plus récente est téléchargée en arrière-plan ; une notification propose ensuite l’installation en un clic et le redémarrage.
+- L’installation redémarre l’application : rappeler aux utilisateurs d’exporter leurs modifications PDF avant de l’installer. Le mode web et le mode développement ne permettent pas de valider à eux seuls l’installation d’une mise à jour native.
+
 ---
 
 # Consignes de conception web — identité originale et UX solide

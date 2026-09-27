@@ -1,5 +1,6 @@
 <script lang="ts">
 	import ActionButton from '#lib/components/ActionButton.svelte';
+	import DownloadInstaller from '#lib/components/DownloadInstaller.svelte';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import {
@@ -265,6 +266,7 @@
 			>
 				Ouvrez un PDF, organisez ses pages et exportez votre travail en quelques gestes.
 			</p>
+			<DownloadInstaller />
 		</section>
 		<section
 			class="workspace-card grid grid-cols-[minmax(260px,0.86fr)_minmax(320px,1.14fr)] border border-(--line) rounded-[14px] bg-(--paper) shadow-[0_18px_55px_rgba(46,55,44,0.045)] overflow-hidden max-[760px]:grid-cols-[1fr]"

@@ -4,6 +4,16 @@
 
 Dans l’éditeur, glissez les miniatures pour changer l’ordre des pages. Les flèches sous chaque page offrent la même action au clavier et sur écran tactile.
 
+## Mises à jour de l’application
+
+Sur l’accueil web, Inscribe propose l’installateur de la dernière release stable en fonction du système du visiteur. Sur macOS, choisissez Apple Silicon ou Intel ; le navigateur ne permet pas de distinguer ces processeurs de façon fiable. Le lien « Tous les installateurs » reste disponible pour choisir une autre version ou si GitHub est indisponible. Sur mobile, l’éditeur web reste accessible.
+
+L’application vérifie les nouvelles versions au démarrage et périodiquement. Lorsqu’une version est disponible, elle se télécharge en arrière-plan. Une notification permet ensuite de l’installer en un clic ; l’application redémarre, donc exportez vos changements avant de lancer l’installation.
+
+Les versions sont publiées sur GitHub en poussant un tag `v` correspondant à la version dans `package.json`, `src-tauri/Cargo.toml` et `src-tauri/tauri.conf.json` (par exemple `v0.1.0`). Le workflow construit les installateurs et leurs signatures de mise à jour pour macOS, Windows et Linux, puis publie la version. Configurez le secret GitHub Actions `TAURI_SIGNING_PRIVATE_KEY` avec la clé privée créée par `pnpm tauri signer generate`. La clé publique de vérification est dans `src-tauri/tauri.conf.json` ; conservez la clé privée en lieu sûr et ne la commitez jamais.
+
+Les installations antérieures à l’activation du mécanisme de mise à jour doivent installer manuellement la première version signée. Les versions suivantes pourront être installées depuis l’application.
+
 ## Démarrer
 
 Prérequis : Node.js 22.17 ou supérieur, pnpm 11 et Rust pour l’application Tauri.

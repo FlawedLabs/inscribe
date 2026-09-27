@@ -195,7 +195,10 @@ test('restores page actions from the thumbnail context menu', async ({ page }) =
 		.getByRole('button', { name: 'Supprimer la page 1' })
 		.click();
 	await expect(page.getByRole('dialog', { name: 'Supprimer la page 1 ?' })).toBeVisible();
-	await page.getByRole('button', { name: 'Annuler' }).click();
+	await page
+		.getByRole('dialog', { name: 'Supprimer la page 1 ?' })
+		.getByRole('button', { name: 'Annuler', exact: true })
+		.click();
 	await expect(thumbnail(2)).toBeVisible();
 	await page
 		.locator('.page-section')
