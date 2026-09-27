@@ -51,7 +51,7 @@ test('pinch zoom changes the PDF preview without scaling the mobile interface', 
 		.poll(async () => (await page.locator('.pdf-sheet').boundingBox())!.width)
 		.toBeGreaterThan(initialSheet!.width);
 	await expect
-		.poll(async () => (await page.locator('.textLayer span').first().boundingBox())!.width)
+		.poll(async () => (await page.locator('.textLayer span').first().boundingBox())?.width ?? 0)
 		.toBeGreaterThan(textBefore!.width);
 	await expect
 		.poll(async () => {
